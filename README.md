@@ -20,8 +20,9 @@ Interface de terminal de fósforo verde. Nenhum servidor, nenhuma sincronizaçã
 
 | | |
 |:-:|:-:|
-| <img src="docs/lock.png" alt="Tela de bloqueio" width="400"><br>**Bloqueio** — Argon2id de 256 MiB | <img src="docs/tape.png" alt="Aba Fita" width="400"><br>**Fita** — o cofre inteiro vira áudio |
-| <img src="docs/stego.png" alt="Aba Ocultar" width="400"><br>**Ocultar** — cofre escondido numa música | <img src="docs/seguranca.png" alt="Aba Segurança" width="400"><br>**Segurança** — TOTP, Hello, keyfile |
+| <img src="docs/lock.png" alt="Tela de bloqueio" width="420"><br>**Bloqueio** — Argon2id de 256 MiB | <img src="docs/vault.png" alt="Lista do cofre" width="420"><br>**Cofre** — logins, notas, cartões, chaves |
+| <img src="docs/tape.png" alt="Aba Fita" width="420"><br>**Fita** — o cofre inteiro vira áudio | <img src="docs/stego.png" alt="Aba Ocultar" width="420"><br>**Ocultar** — cofre escondido numa música |
+| <img src="docs/gerador.png" alt="Gerador de senhas" width="420"><br>**Gerador** — entropia calculada, sem viés | <img src="docs/seguranca.png" alt="Aba Segurança" width="420"><br>**Segurança** — TOTP, Hello, keyfile |
 
 </div>
 
