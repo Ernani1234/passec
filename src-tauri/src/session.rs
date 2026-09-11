@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use crate::guard::{Guard, GuardState};
 use crate::vault::UnlockedVault;
 
 /// Inatividade tolerada antes do cofre trancar sozinho.
@@ -27,10 +28,16 @@ const MAX_PENALTY: Duration = Duration::from_secs(300);
 pub enum SessionError {
     #[error("o cofre esta trancado")]
     Locked,
+
+    #[error("o cofre esta em guarda")]
+    OnGuard,
     #[error("aguarde {0} segundos antes de tentar de novo")]
     Throttled(u64),
     #[error("nenhum cofre foi aberto nesta sessao")]
     NoVaultPath,
+
+    #[error("nenhuma combinacao de teclas foi definida; use a senha mestra")]
+    NoPattern,
 }
 
 /// Conteudo protegido pelo mutex.
@@ -44,6 +51,8 @@ struct Inner {
     failed_attempts: u32,
     /// Instante antes do qual novas tentativas sao recusadas.
     penalty_until: Option<Instant>,
+    /// Estado do modo em guarda (interface trancada, chaves vivas).
+    guard: Guard,
 }
 
 impl Default for Inner {
@@ -56,6 +65,7 @@ impl Default for Inner {
             last_totp_step: None,
             failed_attempts: 0,
             penalty_until: None,
+            guard: Guard::default(),
         }
     }
 }
@@ -130,6 +140,7 @@ impl AppState {
     pub fn lock(&self) -> bool {
         let mut inner = self.lock_inner();
         inner.last_totp_step = None;
+        inner.guard.leave();
         // O `drop` de UnlockedVault zera KEK e VaultKey.
         inner.vault.take().is_some()
     }
@@ -160,16 +171,114 @@ impl AppState {
             inner.last_totp_step = None;
             return Err(SessionError::Locked);
         }
+        // Em guarda, nenhuma leitura do cofre passa. Sem esta barreira o modo
+        // seria so uma cortina visual: a interface continuaria podendo pedir
+        // qualquer item pelo IPC.
+        if inner.guard.is_on_guard() {
+            return Err(SessionError::OnGuard);
+        }
+
         let vault = inner.vault.as_mut().ok_or(SessionError::Locked)?;
         let out = f(vault);
         inner.last_activity = Instant::now();
         Ok(out)
     }
 
+    /// Empresta o cofre **sem** verificar o modo em guarda.
+    ///
+    /// Existe para um unico proposito: conferir a combinacao de teclas, que
+    /// precisa da VaultKey justamente enquanto o modo esta ativo. Nao use para
+    /// mais nada — e o furo que o modo existe para tapar.
+    fn with_vault_bypassing_guard<T, F>(&self, f: F) -> Result<T, SessionError>
+    where
+        F: FnOnce(&mut UnlockedVault) -> T,
+    {
+        let mut inner = self.lock_inner();
+        let vault = inner.vault.as_mut().ok_or(SessionError::Locked)?;
+        Ok(f(vault))
+    }
+
+    // --- modo em guarda ----------------------------------------------------
+
+    pub fn guard_state(&self) -> GuardState {
+        self.lock_inner().guard.state()
+    }
+
+    pub fn guard_seconds_until_lock(&self) -> Option<u64> {
+        self.lock_inner().guard.seconds_until_lock()
+    }
+
+    pub fn guard_attempts(&self) -> u32 {
+        self.lock_inner().guard.attempts()
+    }
+
+    /// Ha combinacao configurada neste cofre.
+    ///
+    /// Consultado em guarda — e justamente nesse estado que a interface precisa
+    /// saber se deve pedir a combinacao ou mandar direto para a senha mestra.
+    /// Devolve apenas um booleano; o resumo em si nao sai daqui.
+    pub fn has_guard_pattern(&self) -> bool {
+        self.with_vault_bypassing_guard(|v| v.body.guard_pattern.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Entra em guarda. Devolve `false` se nao havia cofre aberto.
+    pub fn enter_guard(&self) -> bool {
+        let mut inner = self.lock_inner();
+        if inner.vault.is_none() {
+            return false;
+        }
+        inner.guard.enter();
+        true
+    }
+
+    /// Confere a combinacao e sai do modo em caso de acerto.
+    ///
+    /// Erra demais e a sessao e trancada de verdade: a combinacao e curta, e
+    /// devolver o problema para o Argon2id e a resposta certa a quem esta
+    /// chutando.
+    pub fn try_leave_guard(&self, attempt: &str) -> Result<bool, SessionError> {
+        let armazenado = self.with_vault_bypassing_guard(|v| {
+            v.body
+                .guard_pattern
+                .as_ref()
+                .and_then(|hex| crate::util::from_hex(hex))
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+                .map(|d| (d, *v.vault_key_copy().expose()))
+        })?;
+
+        let Some((digest, chave)) = armazenado else {
+            return Err(SessionError::NoPattern);
+        };
+
+        if crate::guard::verify(&chave, &digest, attempt) {
+            let mut inner = self.lock_inner();
+            inner.guard.leave();
+            inner.last_activity = Instant::now();
+            return Ok(true);
+        }
+
+        let estourou = {
+            let mut inner = self.lock_inner();
+            inner.guard.record_failure()
+        };
+        if estourou {
+            self.lock();
+        }
+        Ok(false)
+    }
+
     // --- inatividade -------------------------------------------------------
 
+    /// Renova o relogio de inatividade.
+    ///
+    /// Em guarda a renovacao e ignorada: se o mouse for esbarrado na mesa, ou
+    /// se alguem mexer na maquina, isso nao pode adiar o bloqueio de verdade.
     pub fn touch(&self) {
-        self.lock_inner().last_activity = Instant::now();
+        let mut inner = self.lock_inner();
+        if !inner.guard.is_on_guard() {
+            inner.last_activity = Instant::now();
+        }
     }
 
     pub fn autolock_secs(&self) -> u64 {
@@ -196,9 +305,19 @@ impl AppState {
     /// Tranca se a inatividade estourou. Chamado pelo vigia de fundo.
     pub fn lock_if_expired(&self) -> bool {
         let mut inner = self.lock_inner();
-        if inner.vault.is_some() && inner.last_activity.elapsed() >= inner.autolock {
+        if inner.vault.is_none() {
+            return false;
+        }
+
+        // Duas contagens correm em paralelo: a inatividade normal e o prazo do
+        // modo em guarda, que e mais curto. A primeira que vencer tranca.
+        let inativo = inner.last_activity.elapsed() >= inner.autolock;
+        let guarda_expirou = inner.guard.expired();
+
+        if inativo || guarda_expirou {
             inner.vault = None;
             inner.last_totp_step = None;
+            inner.guard.leave();
             return true;
         }
         false
@@ -223,6 +342,121 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    /// Cria um cofre barato para os testes que precisam de sessao aberta.
+    fn cofre_de_teste() -> UnlockedVault {
+        use crate::crypto::kdf::{KdfParams, UnlockFactors};
+        use crate::crypto::keyfile::KeyfileMode;
+        UnlockedVault::create(
+            &UnlockFactors {
+                password: "uma-senha-mestra-bem-comprida",
+                keyfile_digest: None,
+            },
+            KeyfileMode::None,
+            KdfParams {
+                memory_kib: 16 * 1024,
+                iterations: 2,
+                parallelism: 1,
+            },
+        )
+        .unwrap()
+    }
+
+    fn sessao_aberta() -> AppState {
+        let s = AppState::default();
+        s.set_vault(cofre_de_teste(), PathBuf::from("teste.vault"));
+        s
+    }
+
+    /// A garantia central do modo: em guarda, nada le o cofre pelo IPC.
+    ///
+    /// Sem esta barreira o modo seria apenas uma cortina visual — a interface
+    /// continuaria podendo pedir qualquer senha.
+    #[test]
+    fn em_guarda_nenhuma_leitura_passa() {
+        let s = sessao_aberta();
+        assert!(s.with_vault(|_| ()).is_ok());
+
+        assert!(s.enter_guard());
+        assert!(matches!(s.with_vault(|_| ()), Err(SessionError::OnGuard)));
+
+        // E o cofre continua aberto: em guarda nao e trancar.
+        assert!(s.is_unlocked());
+    }
+
+    #[test]
+    fn combinacao_certa_devolve_o_acesso() {
+        let s = sessao_aberta();
+        s.with_vault(|v| {
+            let chave = *v.vault_key_copy().expose();
+            let d = crate::guard::digest(&chave, "asdf");
+            v.body.guard_pattern = Some(crate::util::to_hex(&d));
+        })
+        .unwrap();
+
+        s.enter_guard();
+        assert!(!s.try_leave_guard("errada").unwrap());
+        assert!(s.with_vault(|_| ()).is_err(), "errar nao pode liberar");
+
+        assert!(s.try_leave_guard("asdf").unwrap());
+        assert!(s.with_vault(|_| ()).is_ok());
+    }
+
+    /// Chutar demais devolve o problema para o Argon2id.
+    #[test]
+    fn erros_demais_trancam_de_verdade() {
+        let s = sessao_aberta();
+        s.with_vault(|v| {
+            let chave = *v.vault_key_copy().expose();
+            let d = crate::guard::digest(&chave, "asdf");
+            v.body.guard_pattern = Some(crate::util::to_hex(&d));
+        })
+        .unwrap();
+
+        s.enter_guard();
+        for _ in 0..crate::guard::MAX_PATTERN_ATTEMPTS {
+            let _ = s.try_leave_guard("nao-e-essa");
+        }
+
+        assert!(!s.is_unlocked(), "deveria ter trancado de verdade");
+        assert!(matches!(s.with_vault(|_| ()), Err(SessionError::Locked)));
+    }
+
+    #[test]
+    fn sem_combinacao_o_erro_manda_usar_a_senha() {
+        let s = sessao_aberta();
+        s.enter_guard();
+        assert!(matches!(
+            s.try_leave_guard("qualquer"),
+            Err(SessionError::NoPattern)
+        ));
+    }
+
+    /// Mexer no mouse durante a pausa nao pode adiar o bloqueio de verdade.
+    #[test]
+    fn em_guarda_o_relogio_nao_e_renovado() {
+        let s = sessao_aberta();
+        s.enter_guard();
+        let antes = s.seconds_until_lock();
+        s.touch();
+        s.touch();
+        assert_eq!(s.seconds_until_lock(), antes);
+    }
+
+    #[test]
+    fn trancar_limpa_o_modo_em_guarda() {
+        let s = sessao_aberta();
+        s.enter_guard();
+        assert!(s.lock());
+        assert_eq!(s.guard_state(), GuardState::Open);
+    }
+
+    #[test]
+    fn nao_entra_em_guarda_sem_cofre_aberto() {
+        let s = AppState::default();
+        assert!(!s.enter_guard());
+    }
 
     #[test]
     fn comeca_trancado() {

@@ -9,7 +9,7 @@ a sincronização é opcional e usa um repositório privado seu.
 
 [![Rust](https://img.shields.io/badge/Rust-1.77%2B-d97706?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app/)
-[![Testes](https://img.shields.io/badge/testes-138%20passando-4bff8a)](#testes)
+[![Testes](https://img.shields.io/badge/testes-160%20passando-4bff8a)](#testes)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078d4?logo=windows&logoColor=white)](#instalação)
 [![Licença](https://img.shields.io/badge/licença-MIT-8dff6a)](LICENSE)
 
@@ -38,6 +38,8 @@ a sincronização é opcional e usa um repositório privado seu.
   - [O que NÃO protege](#o-que-não-protege)
 - [Como o áudio funciona](#como-o-áudio-funciona)
 - [Sincronização entre computadores](#sincronização-entre-computadores)
+- [Itens sob demanda](#itens-sob-demanda)
+- [Modo em guarda](#modo-em-guarda)
 - [Instalação](#instalação)
 - [Uso](#uso)
 - [Arquitetura](#arquitetura)
@@ -122,11 +124,18 @@ Isso libera o áudio para fazer o que ele realmente faz bem.
 - Sincronização por repositório privado do GitHub, com histórico de versões
 - Fusão item a item: dois computadores editando não perdem trabalho
 - Exclusões propagam corretamente (lápides), em vez de ressuscitar itens
+- **Itens sob demanda**: escolha quais credenciais ficam no disco de cada
+  computador; o resto continua na nuvem
+
+**Modo em guarda**
+- Tranca a tela sem fechar o cofre, para a pausa curta (`Ctrl+G`)
+- Volta com uma combinação de teclas de comprimento à sua escolha
+- Vira bloqueio de verdade sozinho em 3 minutos, ou após 5 erros
 
 **Interface**
 - Terminal monocromático de fósforo verde, com linhas de varredura e vinheta
 - Área de transferência apagada sozinha em 25 segundos
-- `Ctrl+L` para trancar imediatamente
+- `Ctrl+L` tranca de verdade; `Ctrl+G` entra em modo em guarda
 
 ---
 
@@ -378,6 +387,85 @@ arquivo, porque o repositório é privado.
 
 ---
 
+## Itens sob demanda
+
+Nem todo computador precisa de todas as credenciais. O PC do trabalho, ou um
+emprestado, pode carregar só o punhado que você usa ali — o resto continua na
+nuvem e **não toca o disco daquela máquina**.
+
+Na aba `NUVEM`, a lista mostra tudo que existe no cofre, marcando o que está
+aqui e o que só está na nuvem. `OCULTAR` tira do disco local; `TRAZER` traz de
+volta.
+
+### Ocultar não é apagar
+
+São operações diferentes no código, e confundi-las custaria caro:
+
+| | O que faz | Propaga? |
+|---|---|---|
+| **Apagar** | Remove o item e deixa uma **lápide** | Sim — some de todos os computadores |
+| **Ocultar** | Tira do disco local e registra a preferência | Não — o item segue na nuvem |
+
+Antes de ocultar, o app **confirma pela rede** que o item já está na nuvem. Sem
+essa checagem, ocultar algo que ainda não subiu seria apagá-lo para sempre.
+
+### Três coisas que não viajam
+
+A escolha do que fica é de cada máquina, e junto com ela ficam mais duas:
+
+- **A lista de ocultos** — senão uma máquina imporia a escolha às outras.
+- **O token do GitHub** — se subisse, revogar o token de um computador perdido
+  não adiantaria: ele voltaria na próxima sincronização dos demais.
+- **A combinação de teclas** — é curta e ligada àquele teclado.
+
+Na sincronização, a nuvem recebe a **união completa**; o disco local recebe a
+união menos os ocultos.
+
+> [!NOTE]
+> A distinção é sobre o **disco**. Para montar a lista de títulos, o corpo
+> remoto é decifrado e passa inteiro pela memória. Um item oculto não fica
+> gravado na máquina — mas isso não é uma barreira contra quem já está com a
+> sessão aberta na sua frente.
+
+---
+
+## Modo em guarda
+
+Para a pausa curta: o café, alguém que chega na mesa. `Ctrl+G` fecha a interface
+na hora, e voltar custa uma combinação de teclas em vez de um Argon2id de
+256 MiB.
+
+### O que ele protege — e o que não
+
+**Em guarda não é criptografia.** As chaves continuam vivas no processo, então
+quem tiver acesso técnico à máquina — um depurador, um dump de memória — alcança
+o cofre sem passar por aqui. O que este modo barra é **a pessoa que senta na sua
+cadeira**.
+
+Isso não é uma limitação que dê para consertar. O caminho seguro seria descartar
+as chaves, e aí sair do modo exigiria *derivar a chave de novo* — o que uma
+combinação de teclas não consegue fazer. Seis teclas dão cerca de 2 bilhões de
+possibilidades; o Argon2id existe justamente porque isso cai em segundos num
+ataque offline. Derivar a chave do cofre a partir dela seria trocar a senha
+mestra por um PIN e chamar de segurança.
+
+Por isso o modo tem prazo e limite:
+
+- **3 minutos** sem ninguém voltar e ele vira bloqueio de verdade, com as chaves
+  descartadas
+- **5 erros** na combinação trancam na hora, devolvendo o problema ao Argon2id
+- **Mexer no mouse não adia nada**: o relógio não é renovado enquanto o modo
+  está ativo
+
+Enquanto ativo, **nenhum comando lê o cofre** — a barreira é no backend, não na
+tela. Sem isso o modo seria só uma cortina visual, com a interface ainda podendo
+pedir qualquer senha pelo IPC.
+
+A combinação é definida na aba `SEGURANÇA`, tem de 3 a 16 teclas e é conferida
+em tempo constante. Ela nunca abre um cofre fechado — só sai do modo em guarda.
+
+---
+
 ## Instalação
 
 ### Binário pronto
@@ -458,6 +546,7 @@ src-tauri/src/
 ├─ sync/          sincronizacao entre computadores
 │  ├─ merge.rs      fusão item a item, com lápides de exclusão
 │  └─ github.rs     Contents API, conflito por sha
+├─ guard.rs       modo em guarda e a combinação de teclas
 ├─ generator.rs    geração e avaliação de senhas
 ├─ session.rs      cofre destrancado, auto-lock, freio de tentativas
 └─ commands.rs     fronteira com a interface
@@ -502,7 +591,7 @@ Gravação é atômica: escreve num temporário e renomeia por cima.
 
 ```bash
 cd src-tauri
-cargo test                 # 125 unitários + 13 de integração
+cargo test                 # 144 unitários + 16 de integração
 cargo clippy --all-targets
 ```
 

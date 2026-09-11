@@ -893,11 +893,15 @@ pub struct SyncStatus {
     pub repo: String,
     pub path: String,
     pub last_sync: i64,
+    /// Itens que existem na nuvem mas nao neste computador.
+    pub archived_here: usize,
 }
 
 #[tauri::command]
 pub fn sync_status(state: State<'_, AppState>) -> Cmd<SyncStatus> {
-    let cfg = state.with_vault(|v| v.body.sync.clone())?;
+    let (cfg, ocultos) =
+        state.with_vault(|v| (v.body.sync.clone(), v.body.archived_here.len()))?;
+
     Ok(match cfg {
         Some(c) => SyncStatus {
             configured: true,
@@ -905,6 +909,7 @@ pub fn sync_status(state: State<'_, AppState>) -> Cmd<SyncStatus> {
             repo: c.repo.clone(),
             path: c.path.clone(),
             last_sync: c.last_sync,
+            archived_here: ocultos,
         },
         None => SyncStatus {
             configured: false,
@@ -912,6 +917,7 @@ pub fn sync_status(state: State<'_, AppState>) -> Cmd<SyncStatus> {
             repo: String::new(),
             path: String::new(),
             last_sync: 0,
+            archived_here: ocultos,
         },
     })
 }
@@ -1077,6 +1083,195 @@ pub fn sync_adopt(
     Ok(AdoptResult { entries, meta })
 }
 
+// --- itens sob demanda -----------------------------------------------------
+
+#[derive(Serialize)]
+pub struct CloudItem {
+    pub id: String,
+    pub kind: vault::EntryKind,
+    pub title: String,
+    pub username: String,
+    pub updated_at: i64,
+    /// `true` quando o item esta no disco desta maquina.
+    pub local: bool,
+}
+
+/// Lista tudo que existe no cofre — o que esta aqui e o que so esta na nuvem.
+///
+/// Para saber os titulos dos itens remotos e preciso decifrar o corpo remoto,
+/// que passa pela RAM inteiro. A distincao que este recurso oferece e sobre o
+/// **disco**: um item oculto nao fica gravado nesta maquina, entao quem levar o
+/// notebook nao o encontra. Nao e uma barreira contra quem esta com a sessao
+/// aberta na sua frente.
+#[tauri::command]
+pub fn cloud_list(state: State<'_, AppState>) -> Cmd<Vec<CloudItem>> {
+    let cfg = state
+        .with_vault(|v| v.body.sync.clone())?
+        .ok_or_else(|| err("a sincronizacao nao esta configurada"))?;
+
+    let bytes = sync::fetch_remote(&sync::repo_from(&cfg))?;
+    let remotos = state.with_vault(|v| v.open_sibling_body(&bytes))??;
+
+    let mut itens = state.with_vault(|v| {
+        v.body
+            .entries
+            .iter()
+            .map(|e| CloudItem {
+                id: e.id.clone(),
+                kind: e.kind,
+                title: e.title.clone(),
+                username: e.username.clone(),
+                updated_at: e.updated_at,
+                local: true,
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    let locais: Vec<String> = itens.iter().map(|i| i.id.clone()).collect();
+    for e in &remotos.entries {
+        if !locais.contains(&e.id) {
+            itens.push(CloudItem {
+                id: e.id.clone(),
+                kind: e.kind,
+                title: e.title.clone(),
+                username: e.username.clone(),
+                updated_at: e.updated_at,
+                local: false,
+            });
+        }
+    }
+
+    itens.sort_by_key(|i| i.title.to_lowercase());
+    Ok(itens)
+}
+
+/// Tira o item deste computador, mantendo-o na nuvem.
+///
+/// A confirmacao de que ele existe no remoto e feita **antes** de remover, e
+/// custa uma ida a rede de proposito: sem ela, ocultar um item que ainda nao
+/// subiu seria apaga-lo para sempre.
+#[tauri::command]
+pub fn entry_archive(app: AppHandle, state: State<'_, AppState>, id: String) -> Cmd<()> {
+    let existe_aqui = state.with_vault(|v| v.body.find(&id).is_some())?;
+    if !existe_aqui {
+        return Err(err("item nao encontrado nesta maquina"));
+    }
+
+    let cfg = state
+        .with_vault(|v| v.body.sync.clone())?
+        .ok_or_else(|| err("configure a sincronizacao antes de ocultar itens"))?;
+
+    let bytes = sync::fetch_remote(&sync::repo_from(&cfg))?;
+    let remotos = state.with_vault(|v| v.open_sibling_body(&bytes))??;
+
+    if !remotos.entries.iter().any(|e| e.id == id) {
+        return Err(err(
+            "este item ainda nao esta na nuvem; sincronize antes de oculta-lo",
+        ));
+    }
+
+    state.with_vault(|v| v.body.unload(&id))?;
+    persist(&state, &app)
+}
+
+/// Traz de volta para este computador um item que estava so na nuvem.
+#[tauri::command]
+pub fn entry_restore(app: AppHandle, state: State<'_, AppState>, id: String) -> Cmd<String> {
+    let cfg = state
+        .with_vault(|v| v.body.sync.clone())?
+        .ok_or_else(|| err("a sincronizacao nao esta configurada"))?;
+
+    let bytes = sync::fetch_remote(&sync::repo_from(&cfg))?;
+    let remotos = state.with_vault(|v| v.open_sibling_body(&bytes))??;
+
+    let item = remotos
+        .entries
+        .iter()
+        .find(|e| e.id == id)
+        .cloned()
+        .ok_or_else(|| err("item nao encontrado na nuvem"))?;
+
+    let titulo = item.title.clone();
+    state.with_vault(|v| {
+        v.body.unarchive(&id);
+        if v.body.find(&id).is_none() {
+            v.body.entries.push(item);
+        }
+    })?;
+    persist(&state, &app)?;
+    Ok(titulo)
+}
+
+// --- modo em guarda --------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct GuardStatus {
+    pub state: crate::guard::GuardState,
+    /// Segundos ate o modo virar bloqueio de verdade.
+    pub seconds_until_lock: Option<u64>,
+    pub attempts: u32,
+    pub max_attempts: u32,
+    /// Ha combinacao de teclas configurada neste cofre.
+    pub has_pattern: bool,
+}
+
+#[tauri::command]
+pub fn guard_status(state: State<'_, AppState>) -> GuardStatus {
+    // Le o padrao sem passar por `with_vault`: em guarda ele recusaria, e a
+    // interface precisa justamente saber se pode pedir a combinacao.
+    let has_pattern = state.has_guard_pattern();
+
+    GuardStatus {
+        state: state.guard_state(),
+        seconds_until_lock: state.guard_seconds_until_lock(),
+        attempts: state.guard_attempts(),
+        max_attempts: crate::guard::MAX_PATTERN_ATTEMPTS,
+        has_pattern,
+    }
+}
+
+#[tauri::command]
+pub fn guard_enter(state: State<'_, AppState>) -> Cmd<()> {
+    if state.enter_guard() {
+        Ok(())
+    } else {
+        Err(err("nao ha cofre aberto para colocar em guarda"))
+    }
+}
+
+/// Tenta sair do modo com a combinacao de teclas.
+///
+/// Devolve `false` quando a combinacao esta errada. Erros demais trancam a
+/// sessao de verdade — e nesse caso a proxima chamada ja encontra o cofre
+/// fechado.
+#[tauri::command]
+pub fn guard_leave(state: State<'_, AppState>, pattern: String) -> Cmd<bool> {
+    Ok(state.try_leave_guard(&pattern)?)
+}
+
+/// Define a combinacao de teclas.
+///
+/// So faz sentido com o cofre aberto pela senha mestra — que e a unica forma
+/// de chegar aqui, ja que todo comando exige a sessao destrancada.
+#[tauri::command]
+pub fn pattern_set(app: AppHandle, state: State<'_, AppState>, pattern: String) -> Cmd<()> {
+    crate::guard::validate_len(&pattern)?;
+
+    state.with_vault(|v| {
+        let chave = *v.vault_key_copy().expose();
+        let digest = crate::guard::digest(&chave, &pattern);
+        v.body.guard_pattern = Some(crate::util::to_hex(&digest));
+    })?;
+
+    persist(&state, &app)
+}
+
+#[tauri::command]
+pub fn pattern_clear(app: AppHandle, state: State<'_, AppState>) -> Cmd<()> {
+    state.with_vault(|v| v.body.guard_pattern = None)?;
+    persist(&state, &app)
+}
+
 // --- utilidades ------------------------------------------------------------
 
 fn unix_now() -> u64 {
@@ -1143,5 +1338,13 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         sync_force_push,
         sync_disable,
         sync_adopt,
+        guard_status,
+        guard_enter,
+        guard_leave,
+        pattern_set,
+        pattern_clear,
+        cloud_list,
+        entry_archive,
+        entry_restore,
     ]
 }

@@ -704,3 +704,119 @@ input[type="checkbox"]:checked {
   .split-left { max-height: 240px; }
   .tab { padding: 10px 12px; letter-spacing: 1.4px; }
 }
+
+/* ------------------------------------------------------ modo em guarda --- */
+
+/* Cobre a tela inteira, acima de tudo menos dos avisos. O fundo e opaco de
+   proposito: se fosse translucido, a lista de credenciais continuaria legivel
+   atras — que e exatamente o que o modo existe para impedir. */
+.guard-host {
+  position: fixed;
+  inset: 0;
+  z-index: 180;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  padding: 20px;
+}
+
+.guard-host[hidden] { display: none !important; }
+
+.guard-box {
+  width: min(460px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+}
+
+.guard-mark {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.15;
+  color: var(--amber);
+  text-shadow: 0 0 10px rgba(255, 193, 75, 0.45);
+}
+
+.guard-line { margin: 0; font-size: 12px; letter-spacing: 1.6px; color: var(--p-mid); }
+.guard-small { font-size: 10.5px; }
+
+/* Um ponto por tecla digitada: mostra progresso sem revelar o comprimento
+   configurado nem as teclas em si. */
+.guard-dots {
+  display: flex;
+  gap: 8px;
+  min-height: 22px;
+  align-items: center;
+  justify-content: center;
+}
+
+.guard-dots i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--p);
+  box-shadow: 0 0 10px var(--p);
+  animation: dot-in 140ms ease-out;
+}
+
+@keyframes dot-in {
+  from { transform: scale(0.3); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+.guard-host.wrong .guard-dots { animation: shake 320ms; }
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-8px); }
+  40%      { transform: translateX(8px); }
+  60%      { transform: translateX(-5px); }
+  80%      { transform: translateX(5px); }
+}
+
+.pattern-field { letter-spacing: 6px; font-size: 16px; }
+
+/* ----------------------------------------------- itens sob demanda ------- */
+
+.cloud-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--p-ghost);
+  background: var(--bg-sunken);
+}
+
+.cloud-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid rgba(14, 58, 32, 0.55);
+}
+
+.cloud-list li:last-child { border-bottom: none; }
+
+.cloud-item-main { flex: 1 1 auto; min-width: 0; }
+.cloud-item-title { color: var(--p-hot); display: block; }
+.cloud-item-sub { font-size: 10.5px; color: var(--p-dim); }
+
+/* O estado "so na nuvem" e mostrado por opacidade e por um selo, nunca so por
+   cor: o tubo e monocromatico e cor sozinha nao distingue nada aqui. */
+.cloud-list li.remote .cloud-item-title { color: var(--p-dim); }
+.cloud-list li.remote { background: rgba(0, 0, 0, 0.25); }
+
+.cloud-where {
+  font-size: 9.5px;
+  letter-spacing: 1.4px;
+  padding: 1px 6px;
+  border: 1px solid var(--p-ghost);
+  color: var(--p-dim);
+  white-space: nowrap;
+}
+
+.cloud-where.here { color: var(--bg); background: var(--p); border-color: var(--p); text-shadow: none; }

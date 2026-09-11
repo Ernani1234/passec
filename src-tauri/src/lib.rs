@@ -8,6 +8,7 @@
 //! * [`auth`]   — TOTP e Windows Hello.
 //! * [`generator`] — criacao e avaliacao de senhas.
 //! * [`sync`]  — fusao item a item e o cofre num repositorio do GitHub.
+//! * [`guard`] — modo "em guarda" para a pausa curta.
 //! * [`session`], [`commands`] — estado da aplicacao e a fronteira com a interface.
 
 pub mod audio;
@@ -15,6 +16,7 @@ pub mod auth;
 pub mod commands;
 pub mod crypto;
 pub mod generator;
+pub mod guard;
 pub mod session;
 pub mod sync;
 pub mod util;

@@ -206,3 +206,113 @@ fn sincronizar_sem_alteracoes_e_inocuo() {
     assert_eq!(r.removed, 0);
     assert_eq!(a.body.entries.len(), 1);
 }
+
+/// Ocultar um item tira ele do disco local, mas ele continua na nuvem.
+///
+/// Esta e a garantia que separa "ocultar" de "apagar". Se ela quebrar, o
+/// usuario perde credenciais achando que so as escondeu — e descobre tarde.
+#[test]
+fn ocultar_nao_remove_o_item_da_nuvem() {
+    let t = agora();
+    let mut v = UnlockedVault::create(&fatores(SENHA), KeyfileMode::None, params()).unwrap();
+    v.body.entries.push(item("Banco", "senha-banco", t));
+    v.body.entries.push(item("Email", "senha-email", t));
+    v.body.entries.push(item("GitHub", "senha-github", t));
+
+    let oculto = v.body.entries[1].id.clone();
+
+    // O que sobe para a nuvem e a uniao completa, antes de qualquer filtro.
+    let completo = v.body.clone();
+    let bytes_remotos = v.serialize_for_remote(&completo).unwrap();
+
+    // Agora oculta localmente.
+    v.body.unload(&oculto);
+    assert_eq!(v.body.entries.len(), 2, "saiu do disco local");
+    assert!(v.body.deleted.is_empty(), "ocultar nao deixa lapide");
+
+    // A nuvem continua com os tres.
+    let remoto = v.open_sibling_body(&bytes_remotos).unwrap();
+    assert_eq!(remoto.entries.len(), 3);
+    assert!(remoto.entries.iter().any(|e| e.id == oculto));
+
+    // E o item oculto pode voltar quando o usuario quiser.
+    let de_volta = remoto.entries.iter().find(|e| e.id == oculto).unwrap().clone();
+    assert_eq!(de_volta.password, "senha-email");
+}
+
+/// A preferencia de ocultar e de cada maquina e nao viaja na sincronizacao.
+///
+/// Junto com ela ficam o token do GitHub e a combinacao de teclas: subir
+/// qualquer um dos tres faria uma maquina impor sua configuracao as outras — e,
+/// no caso do token, revogar o acesso de um computador perdido nao adiantaria,
+/// porque ele voltaria no proximo ciclo.
+#[test]
+fn campos_locais_nao_sobem_para_a_nuvem() {
+    use passec_lib::vault::model::SyncConfig;
+
+    let mut v = UnlockedVault::create(&fatores(SENHA), KeyfileMode::None, params()).unwrap();
+    v.body.entries.push(item("Banco", "senha", agora()));
+
+    v.body.sync = Some(SyncConfig {
+        owner: "Ernani1234".into(),
+        repo: "passwords".into(),
+        path: "passec.vault".into(),
+        token: "github_pat_segredo_desta_maquina".into(),
+        last_sha: "abc".into(),
+        last_sync: 1,
+    });
+    v.body.guard_pattern = Some("resumo-da-combinacao".into());
+    v.body.archived_here = vec!["algum-id".into()];
+
+    let corpo = v.body.clone();
+    let bytes = v.serialize_for_remote(&corpo).unwrap();
+
+    let remoto = v.open_sibling_body(&bytes).unwrap();
+    assert!(remoto.sync.is_none(), "o token do GitHub subiu para a nuvem");
+    assert!(remoto.guard_pattern.is_none(), "a combinacao subiu");
+    assert!(remoto.archived_here.is_empty(), "a lista de ocultos subiu");
+
+    // Mas o conteudo de verdade continua la.
+    assert_eq!(remoto.entries.len(), 1);
+    assert_eq!(remoto.entries[0].password, "senha");
+
+    // E o cofre local segue com os seus campos intactos.
+    assert!(v.body.sync.is_some());
+    assert_eq!(v.body.archived_here.len(), 1);
+
+    // O token nao pode aparecer nem cru nos bytes gravados.
+    assert!(
+        !bytes
+            .windows("github_pat_segredo".len())
+            .any(|w| w == b"github_pat_segredo"),
+        "o token vazou em claro no arquivo"
+    );
+}
+
+/// Um item oculto nao deve ser trazido de volta pelo merge.
+///
+/// O merge une tudo — e isso esta certo, porque a nuvem precisa da uniao. Quem
+/// filtra e o passo seguinte, e este teste trava esse contrato.
+#[test]
+fn merge_une_tudo_e_o_filtro_local_decide_o_que_fica() {
+    let t = agora();
+    let mut v = UnlockedVault::create(&fatores(SENHA), KeyfileMode::None, params()).unwrap();
+    v.body.entries.push(item("Banco", "s1", t));
+    v.body.entries.push(item("Email", "s2", t));
+
+    let oculto = v.body.entries[1].id.clone();
+    let remoto = v.body.clone();
+
+    v.body.unload(&oculto);
+
+    // O merge traz o item oculto de volta para a uniao...
+    let mut completo = v.body.clone();
+    merge::merge_into(&mut completo, &remoto, agora());
+    assert_eq!(completo.entries.len(), 2, "a uniao precisa ter os dois");
+
+    // ...e o filtro local o remove de novo.
+    let ocultos = completo.archived_here.clone();
+    completo.entries.retain(|e| !ocultos.iter().any(|a| a == &e.id));
+    assert_eq!(completo.entries.len(), 1);
+    assert_eq!(completo.entries[0].title, "Banco");
+}

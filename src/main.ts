@@ -280,6 +280,10 @@ function wipeUi(): void {
     $<HTMLInputElement>(id).value = "";
   }
   $<HTMLUListElement>("entry-list").innerHTML = "";
+  $<HTMLUListElement>("cloud-list").innerHTML = "";
+  guardBuffer = [];
+  patternBuffer = [];
+  show($("guard-host"), false);
   clearForm();
   show($("entry-form"), false);
   show($("entry-empty"), true);
@@ -712,6 +716,7 @@ async function refreshSync(): Promise<void> {
 
   show($("sync-form"), !st.configured);
   show($("sync-active"), st.configured);
+  show($("cloud-items-panel"), st.configured);
 
   if (st.configured) {
     $("sync-info").innerHTML = `
@@ -719,7 +724,8 @@ async function refreshSync(): Promise<void> {
       <dt>ARQUIVO</dt><dd>${escapeHtml(st.path)}</dd>
       <dt>ULTIMA SINC.</dt><dd>${
         st.last_sync ? new Date(st.last_sync).toLocaleString("pt-BR") : "nunca"
-      }</dd>`;
+      }</dd>
+      <dt>OCULTOS AQUI</dt><dd>${st.archived_here}</dd>`;
   }
 }
 
@@ -892,6 +898,14 @@ async function refreshSecurity(): Promise<void> {
   show($("sec-hello-off"), helloOn);
   ($("sec-hello-on") as HTMLButtonElement).disabled = !helloAvailable;
 
+  const gs = await api.guardStatus().catch(() => null);
+  if (gs) {
+    const pb = $("pattern-badge");
+    pb.textContent = gs.has_pattern ? "DEFINIDA" : "NENHUMA";
+    pb.className = `badge ${gs.has_pattern ? "on" : "off"}`;
+    show($("pattern-off"), gs.has_pattern);
+  }
+
   const kb = $("sec-keyfile-badge");
   kb.textContent = meta.keyfile_mode === "none" ? "INATIVO" : meta.keyfile_mode.toUpperCase();
   kb.className = `badge ${meta.keyfile_mode === "none" ? "off" : "on"}`;
@@ -997,12 +1011,254 @@ function wireSecurity(): void {
   });
 }
 
+/* ======================================================== modo em guarda === */
+
+/** Teclas digitadas na sobreposicao, ainda nao enviadas. */
+let guardBuffer: string[] = [];
+/** Teclas digitadas ao configurar a combinacao. */
+let patternBuffer: string[] = [];
+
+const MAX_PATTERN = 16;
+
+function renderGuardDots(): void {
+  // Um ponto por tecla: mostra progresso sem revelar quais teclas foram
+  // digitadas nem o comprimento que o cofre espera.
+  $("guard-dots").innerHTML = guardBuffer.map(() => "<i></i>").join("");
+}
+
+function guardVisible(on: boolean): void {
+  show($("guard-host"), on);
+  if (on) {
+    guardBuffer = [];
+    renderGuardDots();
+    setText("guard-status", "");
+  }
+}
+
+async function enterGuard(): Promise<void> {
+  const ok = await guard("entrando em guarda...", () => api.guardEnter());
+  if (ok === undefined) return;
+
+  const st = await api.guardStatus().catch(() => null);
+  setText(
+    "guard-hint",
+    st?.has_pattern
+      ? "digite a combinacao e pressione ENTER"
+      : "nenhuma combinacao definida — use TRANCAR DE VERDADE e entre com a senha mestra",
+  );
+  guardVisible(true);
+  statusBar("em guarda");
+}
+
+async function tryLeaveGuard(): Promise<void> {
+  if (guardBuffer.length === 0) return;
+
+  const tentativa = guardBuffer.join("");
+  let certo: boolean | undefined;
+  try {
+    certo = await api.guardLeave(tentativa);
+  } catch (e) {
+    // Sem combinacao configurada, ou a sessao ja foi trancada por excesso de
+    // erros: os dois casos terminam na tela de senha mestra.
+    setText("guard-status", errMsg(e));
+    const st = await api.guardStatus().catch(() => null);
+    if (!st || st.state === "open") {
+      guardVisible(false);
+      await lockNow("trancado");
+    }
+    return;
+  }
+
+  if (certo) {
+    guardVisible(false);
+    statusBar("de volta");
+    await refreshList();
+    return;
+  }
+
+  // Errou: sacode os pontos, limpa e mostra quanto resta antes de trancar.
+  const host = $("guard-host");
+  host.classList.add("wrong");
+  setTimeout(() => host.classList.remove("wrong"), 340);
+
+  guardBuffer = [];
+  renderGuardDots();
+
+  const st = await api.guardStatus().catch(() => null);
+  if (!st || st.state === "open") {
+    guardVisible(false);
+    await lockNow("trancado apos tentativas demais");
+    return;
+  }
+  const restantes = st.max_attempts - st.attempts;
+  setText(
+    "guard-status",
+    restantes <= 1
+      ? "combinacao errada — a proxima tentativa tranca o cofre"
+      : `combinacao errada — ${restantes} tentativas antes de trancar`,
+  );
+}
+
+function wireGuard(): void {
+  $("guard-to-lock").addEventListener("click", () => {
+    guardVisible(false);
+    void lockNow("trancado manualmente");
+  });
+
+  // Captura global: enquanto a sobreposicao esta aberta, o teclado e dela.
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if ($("guard-host").hidden) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (e.key === "Enter") {
+        void tryLeaveGuard();
+      } else if (e.key === "Backspace") {
+        guardBuffer.pop();
+        renderGuardDots();
+      } else if (e.key === "Escape") {
+        guardVisible(false);
+        void lockNow("trancado manualmente");
+      } else if (e.key.length === 1 && guardBuffer.length < MAX_PATTERN) {
+        guardBuffer.push(e.key);
+        renderGuardDots();
+      }
+    },
+    // Fase de captura: pega a tecla antes de qualquer campo da pagina.
+    true,
+  );
+}
+
+/* ------------------------------------------------- definir a combinacao --- */
+
+function renderPatternField(): void {
+  $<HTMLInputElement>("pattern-input").value = "•".repeat(patternBuffer.length);
+  setText("pattern-len", String(patternBuffer.length));
+}
+
+function wirePattern(): void {
+  const campo = $<HTMLInputElement>("pattern-input");
+
+  campo.addEventListener("keydown", (e) => {
+    e.preventDefault();
+    if (e.key === "Backspace") {
+      patternBuffer.pop();
+    } else if (e.key.length === 1 && patternBuffer.length < MAX_PATTERN) {
+      patternBuffer.push(e.key);
+    }
+    renderPatternField();
+  });
+
+  $("pattern-reset").addEventListener("click", () => {
+    patternBuffer = [];
+    renderPatternField();
+    campo.focus();
+  });
+
+  $("pattern-save").addEventListener("click", async () => {
+    const ok = await guard("gravando combinacao...", () => api.patternSet(patternBuffer.join("")));
+    if (ok === undefined) return;
+    patternBuffer = [];
+    renderPatternField();
+    await refreshSecurity();
+    toast("combinacao gravada");
+  });
+
+  $("pattern-off").addEventListener("click", async () => {
+    if (!confirm("Remover a combinacao? Sair do modo em guarda passara a exigir a senha mestra.")) {
+      return;
+    }
+    const ok = await guard("removendo...", () => api.patternClear());
+    if (ok !== undefined) {
+      await refreshSecurity();
+      toast("combinacao removida");
+    }
+  });
+
+  $("guard-now").addEventListener("click", () => void enterGuard());
+}
+
+/* ==================================================== itens sob demanda ==== */
+
+async function refreshCloudItems(): Promise<void> {
+  const itens = await guard("consultando a nuvem...", () => api.cloudList());
+  if (!itens) return;
+
+  const lista = $<HTMLUListElement>("cloud-list");
+  lista.innerHTML = "";
+
+  for (const it of itens) {
+    const li = document.createElement("li");
+    li.className = it.local ? "" : "remote";
+    li.innerHTML =
+      '<span class="cloud-where ' +
+      (it.local ? "here" : "") +
+      '">' +
+      (it.local ? "AQUI" : "NUVEM") +
+      "</span>" +
+      '<span class="cloud-item-main">' +
+      '<span class="cloud-item-title">' +
+      escapeHtml(it.title) +
+      "</span>" +
+      '<span class="cloud-item-sub">' +
+      KIND_LABEL[it.kind] +
+      (it.username ? " · " + escapeHtml(it.username) : "") +
+      "</span></span>";
+
+    const botao = document.createElement("button");
+    botao.className = "btn small";
+    botao.textContent = it.local ? "OCULTAR" : "TRAZER";
+    botao.addEventListener("click", async () => {
+      if (it.local) {
+        const ok = await guard("ocultando...", () => api.entryArchive(it.id));
+        if (ok === undefined) return;
+        toast(`"${it.title}" saiu deste computador — continua na nuvem`);
+      } else {
+        const titulo = await guard("trazendo...", () => api.entryRestore(it.id));
+        if (titulo === undefined) return;
+        toast(`"${titulo}" trazido para este computador`);
+      }
+      await refreshCloudItems();
+      await refreshList();
+      await refreshSync();
+    });
+
+    li.appendChild(botao);
+    lista.appendChild(li);
+  }
+
+  const aqui = itens.filter((i) => i.local).length;
+  setText("cloud-count", `${aqui} de ${itens.length} aqui`);
+}
+
+function wireCloudItems(): void {
+  $("cloud-refresh").addEventListener("click", () => void refreshCloudItems());
+}
+
 /* ============================================================ status ====== */
 
 function startStatusLoop(): void {
   setInterval(() => {
     const d = new Date();
     setText("st-clock", d.toLocaleTimeString("pt-BR", { hour12: false }));
+  }, 1000);
+
+  // Enquanto em guarda, acompanha o prazo ate o bloqueio de verdade — que o
+  // backend aplica sozinho, mesmo sem ninguem tocar na interface.
+  setInterval(async () => {
+    if ($("guard-host").hidden) return;
+    const gs = await api.guardStatus().catch(() => null);
+    if (!gs || gs.state === "open") {
+      guardVisible(false);
+      await lockNow("trancado por inatividade");
+      return;
+    }
+    setText(
+      "guard-countdown",
+      gs.seconds_until_lock === null ? "—" : humanSecs(gs.seconds_until_lock),
+    );
   }, 1000);
 
   setInterval(async () => {
@@ -1038,6 +1294,10 @@ function wireActivity(): void {
       e.preventDefault();
       void lockNow("trancado manualmente");
     }
+    if (e.ctrlKey && e.key.toLowerCase() === "g") {
+      e.preventDefault();
+      void enterGuard();
+    }
   });
 }
 
@@ -1054,6 +1314,9 @@ async function main(): Promise<void> {
   wireStego();
   wireCloud();
   wireAdopt();
+  wireGuard();
+  wirePattern();
+  wireCloudItems();
   wireSecurity();
   wireActivity();
   startStatusLoop();

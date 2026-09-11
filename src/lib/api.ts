@@ -132,6 +132,8 @@ export interface SyncStatus {
   repo: string;
   path: string;
   last_sync: number;
+  /** Itens que estao na nuvem mas nao neste computador. */
+  archived_here: number;
 }
 
 export interface MergeReport {
@@ -146,6 +148,27 @@ export interface SyncOutcome {
   report: MergeReport;
   had_remote: boolean;
   synced_at: number;
+  archived: number;
+}
+
+export type GuardState = "open" | "onguard";
+
+export interface GuardStatus {
+  state: GuardState;
+  seconds_until_lock: number | null;
+  attempts: number;
+  max_attempts: number;
+  has_pattern: boolean;
+}
+
+export interface CloudItem {
+  id: string;
+  kind: EntryKind;
+  title: string;
+  username: string;
+  updated_at: number;
+  /** `true` quando o item esta no disco desta maquina. */
+  local: boolean;
 }
 
 export interface SyncConfigureResult {
@@ -298,3 +321,24 @@ export const syncAdopt = (
   call<AdoptResult>("sync_adopt", {
     req: { owner, repo, path, token, password, overwriteLocal },
   });
+
+/* ------------------------------------------------------ modo em guarda --- */
+
+export const guardStatus = () => call<GuardStatus>("guard_status");
+export const guardEnter = () => call<void>("guard_enter");
+
+/** Devolve `false` quando a combinacao esta errada. */
+export const guardLeave = (pattern: string) => call<boolean>("guard_leave", { pattern });
+
+export const patternSet = (pattern: string) => call<void>("pattern_set", { pattern });
+export const patternClear = () => call<void>("pattern_clear");
+
+/* ----------------------------------------------------- itens sob demanda - */
+
+export const cloudList = () => call<CloudItem[]>("cloud_list");
+
+/** Tira o item deste computador mantendo-o na nuvem. */
+export const entryArchive = (id: string) => call<void>("entry_archive", { id });
+
+/** Traz de volta um item que estava so na nuvem. Devolve o titulo. */
+export const entryRestore = (id: string) => call<string>("entry_restore", { id });

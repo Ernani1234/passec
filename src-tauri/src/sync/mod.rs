@@ -58,6 +58,8 @@ pub struct SyncOutcome {
     /// Havia versao remota para fundir.
     pub had_remote: bool,
     pub synced_at: i64,
+    /// Itens que estao na nuvem mas ficaram ocultos nesta maquina.
+    pub archived: usize,
 }
 
 pub fn repo_from(cfg: &SyncConfig) -> Repo {
@@ -79,6 +81,11 @@ fn commit_message() -> String {
 }
 
 /// Executa o ciclo completo de sincronizacao.
+///
+/// A nuvem recebe **a uniao completa**; o disco local recebe a uniao menos os
+/// itens que esta maquina escolheu ocultar. Essa assimetria e o que permite
+/// levar o cofre para um computador de trabalho carregando so o que interessa
+/// ali, sem que os demais itens deixem de existir.
 pub fn sync(vault: &mut UnlockedVault) -> Result<SyncOutcome, SyncError> {
     let cfg = vault.body.sync.clone().ok_or(SyncError::NotConfigured)?;
     let repo = repo_from(&cfg);
@@ -86,20 +93,31 @@ pub fn sync(vault: &mut UnlockedVault) -> Result<SyncOutcome, SyncError> {
     let remoto = github::fetch(&repo)?;
     let agora = now_millis();
 
+    // `completo` parte do corpo local — e portanto ja carrega a configuracao,
+    // a combinacao e a lista de ocultos desta maquina, que o merge nao toca.
+    let mut completo = vault.body.clone();
     let (report, sha_base) = match &remoto {
         // Primeira subida: nao ha o que fundir.
         None => (MergeReport::default(), None),
         Some(arquivo) => {
             let corpo_remoto = vault.open_sibling_body(&arquivo.bytes)?;
-            let r = merge::merge_into(&mut vault.body, &corpo_remoto, agora);
+            let r = merge::merge_into(&mut completo, &corpo_remoto, agora);
             (r, Some(arquivo.sha.clone()))
         }
     };
 
-    // Serializa depois da fusao: o que sobe ja e o conteudo combinado.
-    let bytes = vault.serialize()?;
+    // Sobe tudo, inclusive o que esta maquina nao quer ter. `serialize_for_remote`
+    // remove os campos que sao so daqui.
+    let bytes = vault.serialize_for_remote(&completo)?;
     let novo_sha = github::put(&repo, &bytes, sha_base.as_deref(), &commit_message())?;
 
+    // O que fica no disco: a uniao menos os ocultos.
+    let ocultos = completo.archived_here.clone();
+    let antes = completo.entries.len();
+    completo.entries.retain(|e| !ocultos.iter().any(|a| a == &e.id));
+    let archived = antes - completo.entries.len();
+
+    vault.body = completo;
     if let Some(c) = vault.body.sync.as_mut() {
         c.last_sha = novo_sha;
         c.last_sync = agora;
@@ -109,6 +127,7 @@ pub fn sync(vault: &mut UnlockedVault) -> Result<SyncOutcome, SyncError> {
         report,
         had_remote: remoto.is_some(),
         synced_at: agora,
+        archived,
     })
 }
 
@@ -134,7 +153,10 @@ pub fn force_push(vault: &mut UnlockedVault) -> Result<String, SyncError> {
     // arquivo existente, mesmo quando a intencao e sobrescrever.
     let atual = github::fetch(&repo)?.map(|f| f.sha);
 
-    let bytes = vault.serialize()?;
+    let bytes = {
+        let corpo = vault.body.clone();
+        vault.serialize_for_remote(&corpo)?
+    };
     let sha = github::put(&repo, &bytes, atual.as_deref(), &commit_message())?;
 
     if let Some(c) = vault.body.sync.as_mut() {

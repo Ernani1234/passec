@@ -418,6 +418,25 @@
                   </div>
                 </div>
               </div>
+
+              <div class="panel" id="cloud-items-panel" hidden>
+                <div class="panel-head">
+                  <span>ITENS DO COFRE</span>
+                  <span class="dots"></span>
+                  <span class="badge" id="cloud-count">—</span>
+                </div>
+                <div class="panel-body">
+                  <p class="hint">
+                    Escolha o que fica <b>no disco deste computador</b>. O que voce ocultar continua na
+                    nuvem e pode voltar quando quiser — ocultar nao apaga. Util para um PC de trabalho ou
+                    emprestado, onde nem tudo precisa estar.
+                  </p>
+                  <div class="actions">
+                    <button class="btn" id="cloud-refresh">ATUALIZAR LISTA</button>
+                  </div>
+                  <ul class="cloud-list" id="cloud-list"></ul>
+                </div>
+              </div>
             </div>
 
             <!-- ---------- SEGURANCA ---------- -->
@@ -443,6 +462,34 @@
                     </label>
                     <div class="actions"><button class="btn" id="sec-change">TROCAR</button></div>
                     <p class="hint">A troca re-embrulha a mesma chave interna: instantanea, sem reescrever o cofre.</p>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head"><span>MODO EM GUARDA</span><span class="dots"></span><span class="badge" id="pattern-badge">—</span></div>
+                  <div class="panel-body">
+                    <p class="hint">
+                      Tranca a tela sem fechar o cofre, para a pausa curta. As chaves seguem na memoria,
+                      entao isto protege contra <b>quem senta na sua cadeira</b> — nao contra quem tem
+                      acesso tecnico a maquina. Vira bloqueio de verdade sozinho depois de 3 minutos.
+                    </p>
+                    <label class="field">
+                      <span class="field-label">COMBINACAO DE TECLAS (<b id="pattern-len">0</b> TECLAS)</span>
+                      <input type="text" id="pattern-input" readonly
+                             placeholder="clique aqui e digite a sequencia" class="pattern-field" />
+                    </label>
+                    <div class="actions">
+                      <button class="btn primary" id="pattern-save">GRAVAR COMBINACAO</button>
+                      <button class="btn" id="pattern-reset">LIMPAR CAMPO</button>
+                      <button class="btn danger" id="pattern-off" hidden>REMOVER</button>
+                    </div>
+                    <div class="actions">
+                      <button class="btn" id="guard-now">ENTRAR EM GUARDA AGORA</button>
+                    </div>
+                    <p class="hint">
+                      A combinacao so sai do modo em guarda — ela nunca abre um cofre fechado, porque
+                      poucas teclas nao tem entropia para derivar a chave. Errar 5 vezes tranca de verdade.
+                    </p>
                   </div>
                 </div>
 
@@ -513,6 +560,26 @@
         <span class="stat grow" id="st-msg"></span>
         <span class="stat" id="st-clock">--:--:--</span>
       </footer>
+    </div>
+
+    <!-- Sobreposicao do modo em guarda: cobre tudo e captura o teclado. -->
+    <div class="guard-host" id="guard-host" hidden>
+      <div class="guard-box">
+        <pre class="guard-mark" aria-hidden="true">
+   ▄▄▄▄▄▄▄▄▄▄▄▄▄
+   █  EM GUARDA █
+   ▀▀▀▀▀▀▀▀▀▀▀▀▀</pre>
+        <p class="guard-line" id="guard-line">o cofre continua aberto, a tela esta trancada</p>
+        <div class="guard-dots" id="guard-dots"></div>
+        <p class="hint" id="guard-hint">digite a combinacao e pressione ENTER</p>
+        <div class="status-line" id="guard-status"></div>
+        <div class="actions">
+          <button class="btn" id="guard-to-lock">TRANCAR DE VERDADE</button>
+        </div>
+        <p class="hint guard-small">
+          O bloqueio vira definitivo sozinho em <b id="guard-countdown">—</b>.
+        </p>
+      </div>
     </div>
 
     <div id="toast-host" aria-live="polite"></div>

@@ -179,6 +179,8 @@ mod tests {
                 })
                 .collect(),
             sync: None,
+            guard_pattern: None,
+            archived_here: Vec::new(),
         }
     }
 
