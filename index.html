@@ -255,8 +255,15 @@
                         <button type="submit" class="btn primary">GRAVAR</button>
                         <button type="button" class="btn" id="entry-export">EXPORTAR AUDIO</button>
                       </div>
-                      <button type="button" class="btn danger" id="entry-delete">APAGAR</button>
+                      <div>
+                        <button type="button" class="btn" id="entry-hide" hidden>TIRAR DESTE PC</button>
+                        <button type="button" class="btn danger" id="entry-delete">APAGAR DE TODOS</button>
+                      </div>
                     </div>
+                    <p class="hint" id="entry-danger-hint" hidden>
+                      <b>TIRAR DESTE PC</b> mantem o item na nuvem e so libera o disco daqui.
+                      <b>APAGAR DE TODOS</b> remove em todo lugar, inclusive nos outros computadores.
+                    </p>
                   </form>
                 </div>
               </div>

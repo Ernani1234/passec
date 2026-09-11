@@ -316,3 +316,72 @@ fn merge_une_tudo_e_o_filtro_local_decide_o_que_fica() {
     assert_eq!(completo.entries.len(), 1);
     assert_eq!(completo.entries[0].title, "Banco");
 }
+
+/// Desfazer uma exclusao tem que sobreviver a sincronizacao seguinte.
+///
+/// O cenario veio de uso real: o usuario apagou um item achando que so o
+/// tirava deste computador. O item continuava na nuvem, mas traze-lo de volta
+/// nao bastava — a lapide ficava guardada e o apagava outra vez no proximo
+/// ciclo. Restaurar precisa apagar a lapide **e** datar o item como agora,
+/// senao ele perde de novo para a marca de exclusao, que e mais recente.
+#[test]
+fn restaurar_item_apagado_vence_a_lapide() {
+    let t = agora();
+    let mut local = UnlockedVault::create(&fatores(SENHA), KeyfileMode::None, params()).unwrap();
+    local.body.entries.push(item("Banco", "senha-do-banco", t));
+
+    let id = local.body.entries[0].id.clone();
+
+    // A nuvem ainda tem o item: o usuario apagou sem sincronizar depois.
+    let na_nuvem = local.body.clone();
+
+    local.body.remove(&id).unwrap();
+    assert_eq!(local.body.deleted.len(), 1, "apagar deixa lapide");
+
+    // Sincronizar agora apagaria da nuvem tambem — e o que o usuario quase fez.
+    {
+        let mut simulacao = local.body.clone();
+        merge::merge_into(&mut simulacao, &na_nuvem, agora());
+        assert!(
+            simulacao.entries.is_empty(),
+            "sem a correcao, sincronizar propaga a exclusao"
+        );
+    }
+
+    // Restaurar, como o botao TRAZER faz: tira a lapide e redata o item.
+    let mut restaurado = na_nuvem.entries[0].clone();
+    restaurado.updated_at = agora();
+    local.body.deleted.retain(|x| x.id != id);
+    local.body.entries.push(restaurado);
+
+    // Agora a sincronizacao mantem o item nos dois lados.
+    let mut depois = local.body.clone();
+    merge::merge_into(&mut depois, &na_nuvem, agora());
+
+    assert_eq!(depois.entries.len(), 1, "o item precisa sobreviver");
+    assert_eq!(depois.entries[0].password, "senha-do-banco");
+    assert!(depois.deleted.is_empty(), "a lapide nao pode ressurgir");
+}
+
+/// E se a lapide vier do outro computador, a restauracao tambem precisa vencer.
+#[test]
+fn restaurar_vence_lapide_que_chega_do_outro_pc() {
+    let t = agora();
+    let mut local = UnlockedVault::create(&fatores(SENHA), KeyfileMode::None, params()).unwrap();
+    local.body.entries.push(item("Banco", "senha", t));
+    let id = local.body.entries[0].id.clone();
+
+    // O outro computador apagou e subiu a lapide.
+    let mut remoto = local.body.clone();
+    remoto.remove(&id).unwrap();
+
+    // Aqui o usuario restaura, datando o item como agora.
+    if let Some(e) = local.body.find_mut(&id) {
+        e.updated_at = agora() + 1_000;
+    }
+
+    let mut depois = local.body.clone();
+    merge::merge_into(&mut depois, &remoto, agora() + 2_000);
+
+    assert_eq!(depois.entries.len(), 1, "a restauracao mais recente vence");
+}

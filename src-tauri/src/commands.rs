@@ -1194,8 +1194,21 @@ pub fn entry_restore(app: AppHandle, state: State<'_, AppState>, id: String) -> 
     let titulo = item.title.clone();
     state.with_vault(|v| {
         v.body.unarchive(&id);
-        if v.body.find(&id).is_none() {
-            v.body.entries.push(item);
+
+        // Trazer de volta precisa desfazer tambem uma exclusao, nao so um
+        // ocultamento. Sem isto, um item apagado por engano voltaria para a
+        // tela e sumiria de novo na proxima sincronizacao: a lapide continuaria
+        // guardada e venceria a entrada, que carrega uma data mais antiga.
+        v.body.deleted.retain(|t| t.id != id);
+
+        let mut restaurado = item;
+        // A data vira agora pelo mesmo motivo: se outro computador ainda tiver
+        // a lapide, ela so perde para uma edicao mais recente que ela.
+        restaurado.updated_at = vault::model::now_millis();
+
+        match v.body.find_mut(&id) {
+            Some(existente) => *existente = restaurado,
+            None => v.body.entries.push(restaurado),
         }
     })?;
     persist(&state, &app)?;

@@ -40,6 +40,8 @@ let creating = false;
 let keyfilePath: string | null = null;
 let selectedId: string | null = null;
 let totpTimer: number | undefined;
+/** A sincronizacao esta ligada — decide se "tirar deste PC" faz sentido. */
+let syncOn = false;
 
 const WAV_FILTER = [{ name: "Audio WAV", extensions: ["wav"] }];
 
@@ -511,10 +513,41 @@ function wireVault(): void {
     toast("gravado e cifrado em disco");
   });
 
+  // Tirar deste computador: o item continua na nuvem.
+  $("entry-hide").addEventListener("click", async () => {
+    if (!selectedId) return;
+    const titulo = $<HTMLInputElement>("f-title").value;
+    const ok = await guard("tirando deste computador...", () => api.entryArchive(selectedId!));
+    if (ok === undefined) return;
+
+    selectedId = null;
+    clearForm();
+    show($("entry-form"), false);
+    show($("entry-empty"), true);
+    await refreshList();
+    await refreshSync();
+    toast(`"${titulo}" saiu daqui — continua na nuvem, veja na aba NUVEM`);
+  });
+
   $("entry-delete").addEventListener("click", async () => {
     if (!selectedId) return;
     const titulo = $<HTMLInputElement>("f-title").value;
-    if (!confirm(`Apagar "${titulo}" definitivamente?`)) return;
+
+    // O texto precisa dizer o alcance real da acao. "Apagar definitivamente?"
+    // nao deixava claro que a exclusao viaja para a nuvem e para os outros
+    // computadores — e o botao ao lado faz justamente a versao local.
+    const aviso = syncOn
+      ? `APAGAR "${titulo}" DE TODOS OS COMPUTADORES?
+
+` +
+        `O item sai daqui, sai da nuvem e sai dos outros computadores na proxima sincronizacao.
+
+` +
+        `Se voce so quer liberar o disco desta maquina, cancele e use TIRAR DESTE PC.`
+      : `Apagar "${titulo}" deste cofre?`;
+
+    if (!confirm(aviso)) return;
+
     const ok = await guard("apagando...", () => api.entryDelete(selectedId!));
     if (ok === undefined) return;
     selectedId = null;
@@ -522,7 +555,11 @@ function wireVault(): void {
     show($("entry-form"), false);
     show($("entry-empty"), true);
     await refreshList();
-    toast("item apagado");
+    toast(
+      syncOn
+        ? "item apagado — da para recuperar pelo historico do repositorio"
+        : "item apagado",
+    );
   });
 
   $("entry-export").addEventListener("click", async () => {
@@ -714,9 +751,12 @@ async function refreshSync(): Promise<void> {
   badge.textContent = st.configured ? "LIGADA" : "DESLIGADA";
   badge.className = `badge ${st.configured ? "on" : "off"}`;
 
+  syncOn = st.configured;
   show($("sync-form"), !st.configured);
   show($("sync-active"), st.configured);
   show($("cloud-items-panel"), st.configured);
+  show($("entry-hide"), st.configured);
+  show($("entry-danger-hint"), st.configured);
 
   if (st.configured) {
     $("sync-info").innerHTML = `

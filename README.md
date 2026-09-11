@@ -9,7 +9,7 @@ a sincronização é opcional e usa um repositório privado seu.
 
 [![Rust](https://img.shields.io/badge/Rust-1.77%2B-d97706?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app/)
-[![Testes](https://img.shields.io/badge/testes-160%20passando-4bff8a)](#testes)
+[![Testes](https://img.shields.io/badge/testes-162%20passando-4bff8a)](#testes)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078d4?logo=windows&logoColor=white)](#instalação)
 [![Licença](https://img.shields.io/badge/licença-MIT-8dff6a)](LICENSE)
 
@@ -409,6 +409,28 @@ São operações diferentes no código, e confundi-las custaria caro:
 Antes de ocultar, o app **confirma pela rede** que o item já está na nuvem. Sem
 essa checagem, ocultar algo que ainda não subiu seria apagá-lo para sempre.
 
+No formulário de um item, os dois botões ficam lado a lado e dizem o alcance de
+cada um: `TIRAR DESTE PC` e `APAGAR DE TODOS`. O segundo pede uma confirmação
+que soletra o que vai acontecer — apagar viaja para a nuvem e para os outros
+computadores, e o diálogo aponta o primeiro botão como alternativa.
+
+### Recuperar algo apagado por engano
+
+Como cada sincronização é um commit, o cofre anterior continua no histórico do
+repositório. Dois caminhos, conforme o caso:
+
+- **Apagou e ainda não sincronizou:** o item segue intacto na nuvem. Vá em
+  `NUVEM` → `ATUALIZAR LISTA`, ele aparece marcado como `NUVEM`, e `TRAZER` o
+  recupera. **Não sincronize antes disso** — a lápide local apagaria o item de
+  lá.
+- **Apagou e já sincronizou:** abra o histórico do arquivo no GitHub
+  (`commits/main/passec.vault`), baixe uma versão anterior e restaure.
+
+`TRAZER` desfaz tanto um ocultamento quanto uma exclusão: além de trazer o item,
+ele remove a lápide e redata a entrada. Sem essas duas coisas, o item voltaria
+para a tela e sumiria de novo na sincronização seguinte, porque a lápide é mais
+recente que a entrada restaurada e venceria a disputa.
+
 ### Três coisas que não viajam
 
 A escolha do que fica é de cada máquina, e junto com ela ficam mais duas:
@@ -591,7 +613,7 @@ Gravação é atômica: escreve num temporário e renomeia por cima.
 
 ```bash
 cd src-tauri
-cargo test                 # 144 unitários + 16 de integração
+cargo test                 # 144 unitários + 18 de integração
 cargo clippy --all-targets
 ```
 
