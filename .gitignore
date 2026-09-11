@@ -1,0 +1,18 @@
+# build
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# COFRE E SEGREDOS — nunca versionar
+*.vault
+*.passec
+*.keyfile.wav
+*.tape.wav
+vault/
+.secrets/
+
+# sistema
+.DS_Store
+Thumbs.db
+*.log

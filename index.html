@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PASSEC</title>
+    <link rel="stylesheet" href="/src/styles/pipboy.css" />
+  </head>
+  <body>
+    <!-- O "tubo": tudo mora aqui dentro para receber curvatura e brilho. -->
+    <div id="crt">
+      <div class="crt-scanlines" aria-hidden="true"></div>
+      <div class="crt-vignette" aria-hidden="true"></div>
+      <div class="crt-glow" aria-hidden="true"></div>
+
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="titlebar-id" data-tauri-drag-region>
+          <span class="blip"></span>
+          <span class="brand">PASSEC</span>
+          <span class="version">v0.1.0 // COFRE LOCAL</span>
+        </div>
+        <div class="titlebar-actions">
+          <button class="winbtn" id="win-min" title="Minimizar" aria-label="Minimizar">—</button>
+          <button class="winbtn" id="win-max" title="Maximizar" aria-label="Maximizar">▢</button>
+          <button class="winbtn danger" id="win-close" title="Fechar" aria-label="Fechar">✕</button>
+        </div>
+      </header>
+
+      <main id="stage">
+        <!-- ================= BOOT ================= -->
+        <section class="screen active" id="screen-boot">
+          <pre class="boot-log" id="boot-log"></pre>
+        </section>
+
+        <!-- ================= BLOQUEIO ================= -->
+        <section class="screen" id="screen-lock">
+          <div class="lock-wrap">
+            <pre class="ascii-mark" aria-hidden="true">
+ ██████╗  █████╗ ███████╗███████╗███████╗ ██████╗
+ ██╔══██╗██╔══██╗██╔════╝██╔════╝██╔════╝██╔════╝
+ ██████╔╝███████║███████╗███████╗█████╗  ██║
+ ██╔═══╝ ██╔══██║╚════██║╚════██║██╔══╝  ██║
+ ██║     ██║  ██║███████║███████║███████╗╚██████╗
+ ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝ ╚═════╝</pre>
+
+            <div class="panel lock-panel">
+              <div class="panel-head">
+                <span id="lock-title">AUTENTICACAO NECESSARIA</span>
+                <span class="dots"></span>
+                <span id="lock-mode-badge" class="badge">—</span>
+              </div>
+
+              <div class="panel-body">
+                <div id="lock-intro" class="hint"></div>
+
+                <label class="field">
+                  <span class="field-label">SENHA MESTRA</span>
+                  <input type="password" id="lock-password" autocomplete="off" spellcheck="false" />
+                </label>
+
+                <div id="lock-confirm-row" hidden>
+                  <label class="field">
+                    <span class="field-label">CONFIRMAR SENHA</span>
+                    <input type="password" id="lock-password2" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <div class="meter" id="lock-strength">
+                    <div class="meter-bar"><i></i></div>
+                    <span class="meter-label">—</span>
+                  </div>
+                  <div class="warnings" id="lock-warnings"></div>
+                </div>
+
+                <div id="lock-keyfile-row" hidden>
+                  <label class="field">
+                    <span class="field-label">KEYFILE DE AUDIO</span>
+                    <div class="row">
+                      <input type="text" id="lock-keyfile" readonly placeholder="nenhum arquivo selecionado" />
+                      <button class="btn" id="lock-keyfile-pick">PROCURAR</button>
+                    </div>
+                  </label>
+                </div>
+
+                <div id="lock-totp-row" hidden>
+                  <label class="field">
+                    <span class="field-label">CODIGO TOTP</span>
+                    <input type="text" id="lock-totp" inputmode="numeric" maxlength="6"
+                           autocomplete="off" class="totp-input" placeholder="000000" />
+                  </label>
+                </div>
+
+                <div id="lock-setup-extra" hidden>
+                  <label class="field">
+                    <span class="field-label">SEGUNDO FATOR NA CHAVE</span>
+                    <select id="lock-keyfile-mode">
+                      <option value="none">Nenhum — so a senha mestra</option>
+                      <option value="generated">Keyfile gerado pelo PASSEC (recomendado)</option>
+                      <option value="rawfile">Um audio meu (musica, gravacao)</option>
+                    </select>
+                  </label>
+                  <p class="hint" id="lock-keyfile-hint"></p>
+                </div>
+
+                <div class="actions">
+                  <button class="btn primary" id="lock-submit">DESTRANCAR</button>
+                  <button class="btn" id="lock-hello" hidden>WINDOWS HELLO</button>
+                </div>
+
+                <div class="status-line" id="lock-status"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= APLICACAO ================= -->
+        <section class="screen" id="screen-app">
+          <nav class="tabs" id="tabs">
+            <button class="tab active" data-pane="pane-vault">COFRE</button>
+            <button class="tab" data-pane="pane-gen">GERADOR</button>
+            <button class="tab" data-pane="pane-tape">FITA</button>
+            <button class="tab" data-pane="pane-stego">OCULTAR</button>
+            <button class="tab" data-pane="pane-sec">SEGURANCA</button>
+          </nav>
+
+          <div class="panes">
+            <!-- ---------- COFRE ---------- -->
+            <div class="pane active" id="pane-vault">
+              <div class="split">
+                <div class="split-left">
+                  <div class="searchbar">
+                    <input type="text" id="search" placeholder="BUSCAR..." autocomplete="off" spellcheck="false" />
+                    <button class="btn small" id="entry-new">+ NOVO</button>
+                  </div>
+                  <ul class="entry-list" id="entry-list"></ul>
+                  <div class="list-foot"><span id="entry-count">0 itens</span></div>
+                </div>
+
+                <div class="split-right">
+                  <div id="entry-empty" class="empty">
+                    <pre aria-hidden="true">   ┌─────────────┐
+   │  ▓▓▓▓▓▓▓▓▓  │
+   │  ▓       ▓  │
+   │  ▓▓▓▓▓▓▓▓▓  │
+   └─────────────┘</pre>
+                    <p>SELECIONE UM REGISTRO</p>
+                  </div>
+
+                  <form id="entry-form" hidden autocomplete="off">
+                    <div class="form-head">
+                      <select id="f-kind" class="kind-select">
+                        <option value="login">LOGIN</option>
+                        <option value="note">NOTA</option>
+                        <option value="card">CARTAO</option>
+                        <option value="identity">IDENTIDADE</option>
+                        <option value="key">CHAVE</option>
+                        <option value="wifi">WI-FI</option>
+                      </select>
+                      <button type="button" class="star" id="f-fav" title="Favorito">★</button>
+                    </div>
+
+                    <label class="field">
+                      <span class="field-label">TITULO</span>
+                      <input type="text" id="f-title" spellcheck="false" />
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">USUARIO</span>
+                      <div class="row">
+                        <input type="text" id="f-username" spellcheck="false" />
+                        <button type="button" class="btn icon" data-copy="f-username" title="Copiar">⧉</button>
+                      </div>
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">SENHA</span>
+                      <div class="row">
+                        <input type="password" id="f-password" spellcheck="false" />
+                        <button type="button" class="btn icon" id="f-reveal" title="Mostrar">◉</button>
+                        <button type="button" class="btn icon" data-copy="f-password" title="Copiar">⧉</button>
+                        <button type="button" class="btn icon" id="f-gen" title="Gerar">⟳</button>
+                      </div>
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">ENDERECO</span>
+                      <input type="text" id="f-url" spellcheck="false" />
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">SEGREDO 2FA DESTE ITEM (BASE32)</span>
+                      <div class="row">
+                        <input type="password" id="f-totp" spellcheck="false" placeholder="opcional" />
+                        <button type="button" class="btn icon" id="f-totp-reveal" title="Mostrar">◉</button>
+                      </div>
+                    </label>
+                    <div class="totp-live" id="f-totp-live" hidden>
+                      <span class="totp-code" id="f-totp-code">------</span>
+                      <div class="totp-ring"><i id="f-totp-ring"></i></div>
+                      <button type="button" class="btn small" data-copy-text="f-totp-code">COPIAR</button>
+                    </div>
+
+                    <label class="field">
+                      <span class="field-label">TAGS (separadas por virgula)</span>
+                      <input type="text" id="f-tags" spellcheck="false" />
+                    </label>
+
+                    <label class="field">
+                      <span class="field-label">NOTAS</span>
+                      <textarea id="f-notes" rows="4" spellcheck="false"></textarea>
+                    </label>
+
+                    <div class="actions spread">
+                      <div>
+                        <button type="submit" class="btn primary">GRAVAR</button>
+                        <button type="button" class="btn" id="entry-export">EXPORTAR AUDIO</button>
+                      </div>
+                      <button type="button" class="btn danger" id="entry-delete">APAGAR</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+
+            <!-- ---------- GERADOR ---------- -->
+            <div class="pane" id="pane-gen">
+              <div class="panel">
+                <div class="panel-head"><span>GERADOR DE SENHAS</span><span class="dots"></span></div>
+                <div class="panel-body">
+                  <output class="gen-output" id="gen-out">—</output>
+                  <div class="gen-entropy"><span id="gen-bits">0 bits</span><div class="meter-bar wide"><i id="gen-bar"></i></div></div>
+
+                  <label class="field">
+                    <span class="field-label">COMPRIMENTO: <b id="gen-len-label">24</b></span>
+                    <input type="range" id="gen-len" min="8" max="128" value="24" />
+                  </label>
+
+                  <div class="checks">
+                    <label><input type="checkbox" id="gen-lower" checked /> minusculas</label>
+                    <label><input type="checkbox" id="gen-upper" checked /> MAIUSCULAS</label>
+                    <label><input type="checkbox" id="gen-digits" checked /> digitos</label>
+                    <label><input type="checkbox" id="gen-symbols" checked /> simbolos</label>
+                    <label><input type="checkbox" id="gen-ambig" /> evitar ambiguos (0/O, 1/l)</label>
+                  </div>
+
+                  <div class="actions">
+                    <button class="btn primary" id="gen-run">GERAR</button>
+                    <button class="btn" id="gen-copy">COPIAR</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ---------- FITA ---------- -->
+            <div class="pane" id="pane-tape">
+              <div class="panel">
+                <div class="panel-head"><span>FITA — COFRE EM AUDIO</span><span class="dots"></span></div>
+                <div class="panel-body">
+                  <p class="hint">
+                    O cofre inteiro vira um WAV que chia feito modem discado. O que vai no arquivo e o
+                    <b>cofre ja cifrado</b> — o som e transporte, nao protecao. Restaurar exige a mesma senha mestra.
+                  </p>
+
+                  <div class="waveform" id="tape-wave" aria-hidden="true"></div>
+
+                  <label class="field">
+                    <span class="field-label">ROBUSTEZ</span>
+                    <select id="tape-robust">
+                      <option value="digital">Digital — so vai ser copiado (arquivo menor)</option>
+                      <option value="airborne">Aereo — vai ser tocado/regravado/recomprimido</option>
+                    </select>
+                  </label>
+                  <div class="hint" id="tape-estimate">—</div>
+
+                  <div class="actions">
+                    <button class="btn primary" id="tape-export">GRAVAR FITA</button>
+                    <button class="btn" id="tape-import">RESTAURAR DE FITA</button>
+                  </div>
+
+                  <div class="report" id="tape-report" hidden></div>
+                </div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-head"><span>IMPORTAR CREDENCIAL AVULSA</span><span class="dots"></span></div>
+                <div class="panel-body">
+                  <p class="hint">Le um WAV gerado por "EXPORTAR AUDIO" de um item. Pede a senha propria daquele arquivo.</p>
+                  <div class="actions"><button class="btn" id="entry-import">LER AUDIO DE ITEM</button></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ---------- OCULTAR ---------- -->
+            <div class="pane" id="pane-stego">
+              <div class="panel">
+                <div class="panel-head"><span>ESTEGANOGRAFIA</span><span class="dots"></span></div>
+                <div class="panel-body">
+                  <p class="hint">
+                    Esconde o cofre nos bits menos significativos de um WAV comum — a musica continua tocando igual.
+                    Esconder <b>nao e cifrar</b>: o que se esconde ja e ciphertext. A senha abaixo decide so
+                    <i>onde</i> os bits ficam.
+                  </p>
+
+                  <label class="field">
+                    <span class="field-label">AUDIO CARREGADOR (WAV)</span>
+                    <div class="row">
+                      <input type="text" id="stego-carrier" readonly placeholder="nenhum arquivo selecionado" />
+                      <button class="btn" id="stego-pick">PROCURAR</button>
+                    </div>
+                  </label>
+                  <div class="hint" id="stego-capacity">—</div>
+
+                  <label class="field">
+                    <span class="field-label">SENHA DO ESCONDERIJO</span>
+                    <input type="password" id="stego-pass" autocomplete="off" />
+                  </label>
+
+                  <div class="actions">
+                    <button class="btn primary" id="stego-hide">ESCONDER</button>
+                    <button class="btn" id="stego-reveal">REVELAR DE UM AUDIO</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ---------- SEGURANCA ---------- -->
+            <div class="pane" id="pane-sec">
+              <div class="grid2">
+                <div class="panel">
+                  <div class="panel-head"><span>SESSAO</span><span class="dots"></span></div>
+                  <div class="panel-body">
+                    <label class="field">
+                      <span class="field-label">TRANCAR APOS INATIVIDADE: <b id="sec-autolock-label">5 min</b></span>
+                      <input type="range" id="sec-autolock" min="30" max="3600" step="30" value="300" />
+                    </label>
+                    <div class="actions"><button class="btn" id="sec-lock-now">TRANCAR AGORA</button></div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head"><span>SENHA MESTRA</span><span class="dots"></span></div>
+                  <div class="panel-body">
+                    <label class="field">
+                      <span class="field-label">NOVA SENHA</span>
+                      <input type="password" id="sec-newpass" autocomplete="off" />
+                    </label>
+                    <div class="actions"><button class="btn" id="sec-change">TROCAR</button></div>
+                    <p class="hint">A troca re-embrulha a mesma chave interna: instantanea, sem reescrever o cofre.</p>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head"><span>TOTP DO COFRE</span><span class="dots"></span><span class="badge" id="sec-totp-badge">—</span></div>
+                  <div class="panel-body">
+                    <div id="sec-totp-setup" hidden>
+                      <div class="qr" id="sec-qr"></div>
+                      <div class="secret-line">SEGREDO: <code id="sec-totp-secret">—</code></div>
+                      <label class="field">
+                        <span class="field-label">CONFIRME O CODIGO GERADO</span>
+                        <input type="text" id="sec-totp-code" maxlength="6" inputmode="numeric" class="totp-input" placeholder="000000" />
+                      </label>
+                      <div class="actions"><button class="btn primary" id="sec-totp-confirm">ATIVAR</button></div>
+                    </div>
+                    <div class="actions">
+                      <button class="btn" id="sec-totp-begin">CONFIGURAR</button>
+                      <button class="btn danger" id="sec-totp-off" hidden>DESATIVAR</button>
+                    </div>
+                    <p class="hint">
+                      Porta da aplicacao, nao da criptografia: um codigo de 6 digitos nao pode entrar na chave.
+                      Quem tem o arquivo e a senha mestra abre o cofre por fora. Para um segundo fator que
+                      <i>entra</i> na chave, use o keyfile.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head"><span>WINDOWS HELLO</span><span class="dots"></span><span class="badge" id="sec-hello-badge">—</span></div>
+                  <div class="panel-body">
+                    <div class="actions">
+                      <button class="btn" id="sec-hello-on">CADASTRAR</button>
+                      <button class="btn danger" id="sec-hello-off" hidden>REMOVER</button>
+                    </div>
+                    <p class="hint">
+                      A chave fica selada pelo TPM desta maquina. Vale so aqui — noutro PC, a senha mestra.
+                      O cadastro pede o gesto duas vezes para conferir que a assinatura e reproduzivel.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head"><span>KEYFILE DE AUDIO</span><span class="dots"></span><span class="badge" id="sec-keyfile-badge">—</span></div>
+                  <div class="panel-body">
+                    <p class="hint">
+                      Gera um WAV cuja entropia entra no Argon2id junto com a senha. Guarde num pendrive:
+                      sem ele o cofre nao abre, nem com a senha certa. <b>Perder o arquivo e perder o cofre.</b>
+                    </p>
+                    <div class="actions"><button class="btn" id="sec-keyfile-gen">GERAR KEYFILE</button></div>
+                  </div>
+                </div>
+
+                <div class="panel">
+                  <div class="panel-head"><span>DIAGNOSTICO</span><span class="dots"></span></div>
+                  <div class="panel-body">
+                    <dl class="kv" id="sec-diag"></dl>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="statusbar">
+        <span class="stat" id="st-vault">COFRE: —</span>
+        <span class="stat" id="st-lock">AUTO-LOCK: —</span>
+        <span class="stat grow" id="st-msg"></span>
+        <span class="stat" id="st-clock">--:--:--</span>
+      </footer>
+    </div>
+
+    <div id="toast-host" aria-live="polite"></div>
+
+    <!-- Caixa modal usada para senhas pontuais (exportar item, restaurar fita). -->
+    <div class="modal-host" id="modal-host" hidden>
+      <div class="panel modal">
+        <div class="panel-head"><span id="modal-title">CONFIRMAR</span><span class="dots"></span></div>
+        <div class="panel-body">
+          <p class="hint" id="modal-text"></p>
+          <label class="field">
+            <span class="field-label" id="modal-label">SENHA</span>
+            <input type="password" id="modal-input" autocomplete="off" />
+          </label>
+          <div class="actions spread">
+            <button class="btn primary" id="modal-ok">CONFIRMAR</button>
+            <button class="btn" id="modal-cancel">CANCELAR</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

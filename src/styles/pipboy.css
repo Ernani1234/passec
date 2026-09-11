@@ -1,0 +1,706 @@
+/* =========================================================================
+   PASSEC — terminal de fosforo verde
+   =========================================================================
+   O visual imita um CRT monocromatico: uma unica cor de fosforo em varias
+   intensidades, brilho que sangra para fora das letras, linhas de varredura e
+   uma leve vinheta nos cantos do tubo.
+
+   Regra que mantem tudo coerente: a interface inteira usa UM matiz. Hierarquia
+   se faz com intensidade (--p-dim, --p, --p-hot), nunca com outra cor. As
+   unicas excecoes sao o ambar de alerta e o vermelho de perigo, justamente
+   porque precisam quebrar o padrao para serem notadas.
+   ========================================================================= */
+
+:root {
+  --p-hot: #d6ffe4;      /* destaque: titulos, foco, valores vivos */
+  --p: #4bff8a;          /* fosforo padrao */
+  --p-mid: #2fc768;      /* texto secundario */
+  --p-dim: #1d7a41;      /* bordas, rotulos, coisas inertes */
+  --p-ghost: #0e3a20;    /* separadores, trilhos */
+
+  --amber: #ffc14b;      /* atencao */
+  --danger: #ff5f52;     /* destruicao */
+
+  --bg: #050a06;
+  --bg-panel: #071109;
+  --bg-sunken: #030704;
+
+  --glow: 0 0 4px rgba(75, 255, 138, 0.55), 0 0 12px rgba(75, 255, 138, 0.18);
+  --glow-hot: 0 0 6px rgba(214, 255, 228, 0.8), 0 0 18px rgba(75, 255, 138, 0.35);
+
+  --mono: "Cascadia Mono", "Consolas", "JetBrains Mono", "DejaVu Sans Mono",
+          "Courier New", monospace;
+
+  /* Chanfro de canto, o recorte que faz o painel parecer placa de metal. */
+  --notch: 10px;
+}
+
+* { box-sizing: border-box; }
+
+/* O atributo `hidden` do HTML vale `display: none`, mas só como estilo de
+   agente do usuário — qualquer regra nossa que declare `display` ganha dele.
+   Como várias classes aqui usam `display: flex`, esconder pelo atributo
+   silenciosamente não funcionaria (o `.empty` ficava visível por cima do
+   formulário). Esta regra restabelece a precedência. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--p);
+  text-shadow: var(--glow);
+  letter-spacing: 0.4px;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------- o tubo -- */
+
+#crt {
+  position: relative;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(ellipse 120% 100% at 50% 50%, #0a1a0e 0%, var(--bg) 60%, #010401 100%);
+  overflow: hidden;
+}
+
+/* Linhas de varredura. `repeating-linear-gradient` em vez de imagem para
+   escalar em qualquer resolucao; a animacao as desloca devagar, imitando a
+   dessincronizacao do sinal de um monitor analogico. */
+.crt-scanlines {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0px,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 0, 0, 0.22) 3px,
+    rgba(0, 0, 0, 0.22) 4px
+  );
+  animation: drift 9s linear infinite;
+}
+
+@keyframes drift {
+  from { transform: translateY(0); }
+  to   { transform: translateY(4px); }
+}
+
+/* Escurecimento nos cantos: o tubo nunca ilumina as bordas por igual. */
+.crt-vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 61;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 90% 85% at 50% 50%,
+    rgba(0, 0, 0, 0) 45%,
+    rgba(0, 0, 0, 0.45) 80%,
+    rgba(0, 0, 0, 0.85) 100%
+  );
+}
+
+/* Halo geral do fosforo, com cintilacao quase imperceptivel. */
+.crt-glow {
+  position: absolute;
+  inset: 0;
+  z-index: 59;
+  pointer-events: none;
+  background: radial-gradient(ellipse 70% 60% at 50% 45%, rgba(75, 255, 138, 0.05), transparent 70%);
+  animation: flicker 6s steps(1) infinite;
+}
+
+@keyframes flicker {
+  0%, 92%, 96%, 100% { opacity: 1; }
+  94%                { opacity: 0.86; }
+  98%                { opacity: 0.93; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crt-scanlines, .crt-glow, .blip { animation: none; }
+}
+
+/* ----------------------------------------------------------- barra de topo - */
+
+.titlebar {
+  position: relative;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--p-ghost);
+  background: linear-gradient(180deg, rgba(75, 255, 138, 0.07), transparent);
+  flex: 0 0 auto;
+}
+
+.titlebar-id { display: flex; align-items: center; gap: 10px; pointer-events: none; }
+
+.brand {
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--p-hot);
+  text-shadow: var(--glow-hot);
+}
+
+.version { color: var(--p-dim); font-size: 11px; letter-spacing: 1px; }
+
+/* Ponto que pulsa: sinal de "sistema vivo". */
+.blip {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--p);
+  box-shadow: 0 0 8px var(--p);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.8); }
+}
+
+.titlebar-actions { display: flex; gap: 2px; }
+
+.winbtn {
+  width: 34px; height: 26px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--p-mid);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-shadow: inherit;
+}
+
+.winbtn:hover { border-color: var(--p-dim); color: var(--p-hot); background: rgba(75, 255, 138, 0.08); }
+.winbtn.danger:hover { border-color: var(--danger); color: var(--danger); background: rgba(255, 95, 82, 0.12); }
+
+/* --------------------------------------------------------------- palco ---- */
+
+#stage {
+  position: relative;
+  z-index: 10;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+.screen { display: none; flex: 1 1 auto; min-height: 0; }
+.screen.active { display: flex; }
+
+/* ---------------------------------------------------------------- boot ---- */
+
+#screen-boot { align-items: flex-start; padding: 24px 28px; overflow: hidden; }
+
+.boot-log {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--p-mid);
+  white-space: pre-wrap;
+}
+
+.boot-log b { color: var(--p-hot); font-weight: 400; }
+.boot-log .ok { color: var(--p); }
+.boot-log .warn { color: var(--amber); text-shadow: 0 0 6px rgba(255, 193, 75, 0.5); }
+
+/* ------------------------------------------------------------ bloqueio ---- */
+
+#screen-lock { align-items: center; justify-content: center; overflow: auto; padding: 20px; }
+
+.lock-wrap { width: min(560px, 100%); display: flex; flex-direction: column; gap: 18px; align-items: center; }
+
+.ascii-mark {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.05;
+  color: var(--p);
+  text-shadow: var(--glow);
+  opacity: 0.9;
+}
+
+.lock-panel { width: 100%; }
+
+/* --------------------------------------------------------------- paineis -- */
+
+.panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--p-dim);
+  /* Canto superior direito chanfrado: a assinatura visual do painel. */
+  clip-path: polygon(0 0, calc(100% - var(--notch)) 0, 100% var(--notch), 100% 100%, 0 100%);
+  box-shadow: inset 0 0 40px rgba(75, 255, 138, 0.04);
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--p-ghost);
+  background: rgba(75, 255, 138, 0.06);
+  font-size: 11.5px;
+  letter-spacing: 2px;
+  color: var(--p-hot);
+  text-shadow: var(--glow-hot);
+  text-transform: uppercase;
+}
+
+/* Preenche o espaco entre titulo e selo com pontilhado, como um sumario. */
+.dots {
+  flex: 1 1 auto;
+  height: 1px;
+  background-image: linear-gradient(to right, var(--p-ghost) 40%, transparent 0%);
+  background-size: 6px 1px;
+  background-repeat: repeat-x;
+}
+
+.panel-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+
+.badge {
+  padding: 1px 7px;
+  border: 1px solid var(--p-dim);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--p-mid);
+}
+
+.badge.on { color: var(--bg); background: var(--p); border-color: var(--p); text-shadow: none; }
+.badge.off { color: var(--p-dim); }
+
+/* --------------------------------------------------------------- campos --- */
+
+.field { display: flex; flex-direction: column; gap: 5px; }
+
+.field-label {
+  font-size: 10.5px;
+  letter-spacing: 1.8px;
+  color: var(--p-dim);
+  text-transform: uppercase;
+}
+
+.field-label b { color: var(--p); font-weight: 400; }
+
+input[type="text"], input[type="password"], textarea, select {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--p-ghost);
+  color: var(--p-hot);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.6px;
+  text-shadow: var(--glow);
+  outline: none;
+  user-select: text;
+}
+
+textarea { resize: vertical; line-height: 1.5; }
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--p);
+  box-shadow: 0 0 0 1px rgba(75, 255, 138, 0.25), inset 0 0 18px rgba(75, 255, 138, 0.07);
+}
+
+input[readonly] { color: var(--p-mid); }
+input::placeholder, textarea::placeholder { color: var(--p-ghost); }
+
+select {
+  appearance: none;
+  /* Seta desenhada em gradiente: evita depender de um asset externo. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--p-mid) 50%),
+    linear-gradient(135deg, var(--p-mid) 50%, transparent 50%);
+  background-position: calc(100% - 16px) 50%, calc(100% - 11px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+select option { background: var(--bg-panel); color: var(--p); }
+
+.totp-input { letter-spacing: 10px; font-size: 20px; text-align: center; }
+
+.row { display: flex; gap: 6px; align-items: stretch; }
+.row > input { flex: 1 1 auto; min-width: 0; }
+
+/* Trilho do range redesenhado: o padrao do sistema destoa demais. */
+input[type="range"] {
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--p-ghost);
+  border: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 10px; height: 16px;
+  margin-top: -7px;
+  background: var(--p);
+  box-shadow: 0 0 8px var(--p);
+  border: none;
+}
+
+.checks { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; color: var(--p-mid); }
+.checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+input[type="checkbox"] {
+  appearance: none;
+  width: 13px; height: 13px;
+  border: 1px solid var(--p-dim);
+  background: var(--bg-sunken);
+  cursor: pointer;
+  position: relative;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--p);
+  box-shadow: 0 0 8px rgba(75, 255, 138, 0.5);
+}
+
+/* -------------------------------------------------------------- botoes ---- */
+
+.btn {
+  padding: 7px 14px;
+  background: transparent;
+  border: 1px solid var(--p-dim);
+  color: var(--p);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  text-shadow: var(--glow);
+  cursor: pointer;
+  transition: background 120ms linear, border-color 120ms linear, color 120ms linear;
+}
+
+.btn:hover:not(:disabled) { background: rgba(75, 255, 138, 0.12); border-color: var(--p); color: var(--p-hot); }
+.btn:active:not(:disabled) { background: rgba(75, 255, 138, 0.22); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn.primary { border-color: var(--p); background: rgba(75, 255, 138, 0.1); color: var(--p-hot); }
+.btn.primary:hover:not(:disabled) { background: rgba(75, 255, 138, 0.25); }
+
+.btn.danger { border-color: rgba(255, 95, 82, 0.5); color: var(--danger); text-shadow: 0 0 6px rgba(255, 95, 82, 0.4); }
+.btn.danger:hover:not(:disabled) { background: rgba(255, 95, 82, 0.15); border-color: var(--danger); }
+
+.btn.small { padding: 4px 9px; font-size: 10.5px; }
+.btn.icon { padding: 6px 9px; font-size: 13px; letter-spacing: 0; flex: 0 0 auto; }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.actions.spread { justify-content: space-between; }
+
+/* ----------------------------------------------------------------- abas --- */
+
+.tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--p-dim);
+  padding: 0 12px;
+  flex: 0 0 auto;
+  background: rgba(75, 255, 138, 0.03);
+}
+
+.tab {
+  padding: 10px 20px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--p-dim);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 2.4px;
+  cursor: pointer;
+  text-shadow: none;
+}
+
+.tab:hover { color: var(--p-mid); }
+
+.tab.active {
+  color: var(--p-hot);
+  border-bottom-color: var(--p);
+  text-shadow: var(--glow-hot);
+  background: linear-gradient(180deg, transparent, rgba(75, 255, 138, 0.1));
+}
+
+#screen-app { flex-direction: column; }
+
+/* O scroll mora dentro do painel ativo, nao no contêiner: assim o cofre usa a
+   altura inteira e só a lista rola, em vez de a página toda ganhar uma barra
+   por cima do layout de duas colunas. */
+.panes { flex: 1 1 auto; min-height: 0; overflow: hidden; padding: 16px; display: flex; }
+.pane { display: none; width: 100%; }
+.pane.active { display: block; overflow-y: auto; }
+#pane-vault.active { display: flex; overflow: hidden; }
+
+/* Barras de rolagem no tema do terminal.
+   A barra padrão do Chromium é clara e arredondada — num tubo monocromático ela
+   salta aos olhos mais que o conteúdo. */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-sunken); border-left: 1px solid var(--p-ghost); }
+::-webkit-scrollbar-thumb { background: var(--p-ghost); border: 1px solid var(--p-dim); }
+::-webkit-scrollbar-thumb:hover { background: var(--p-dim); }
+::-webkit-scrollbar-corner { background: var(--bg-sunken); }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; align-items: start; }
+
+/* ------------------------------------------------------- cofre: 2 colunas - */
+
+/* O pane do cofre é flex; o split precisa crescer dentro dele, e `min-height: 0`
+   deixa as colunas rolarem em vez de esticar o pai. */
+#pane-vault.active > .split { flex: 1 1 auto; min-height: 0; width: 100%; }
+.split { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 14px; height: 100%; }
+.split-left { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+
+.searchbar { display: flex; gap: 6px; }
+.searchbar input { flex: 1 1 auto; min-width: 0; }
+
+.entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  border: 1px solid var(--p-ghost);
+  background: var(--bg-sunken);
+  min-height: 120px;
+}
+
+.entry-list li {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(14, 58, 32, 0.55);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.entry-list li:hover { background: rgba(75, 255, 138, 0.07); }
+
+.entry-list li.sel {
+  background: rgba(75, 255, 138, 0.14);
+  /* Barra na borda esquerda marca a selecao sem usar outra cor. */
+  box-shadow: inset 3px 0 0 var(--p);
+}
+
+.entry-title { color: var(--p-hot); display: flex; align-items: center; gap: 6px; }
+.entry-sub { font-size: 11px; color: var(--p-dim); }
+.entry-kind { font-size: 9.5px; letter-spacing: 1.4px; color: var(--p-dim); border: 1px solid var(--p-ghost); padding: 0 4px; }
+.entry-fav { color: var(--amber); text-shadow: 0 0 6px rgba(255, 193, 75, 0.5); }
+
+.list-foot { font-size: 10.5px; color: var(--p-dim); letter-spacing: 1.2px; }
+
+.split-right {
+  border: 1px solid var(--p-ghost);
+  background: var(--bg-panel);
+  padding: 14px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--p-ghost); }
+.empty pre { margin: 0; font-size: 13px; line-height: 1.2; }
+.empty p { letter-spacing: 3px; font-size: 11px; margin: 0; }
+
+#entry-form { display: flex; flex-direction: column; gap: 11px; }
+.form-head { display: flex; justify-content: space-between; align-items: center; }
+.kind-select { width: auto; min-width: 140px; }
+
+.star { background: none; border: none; color: var(--p-ghost); font-size: 20px; cursor: pointer; padding: 0 4px; text-shadow: none; }
+.star.on { color: var(--amber); text-shadow: 0 0 10px rgba(255, 193, 75, 0.6); }
+
+/* ------------------------------------------------------------- medidores -- */
+
+.meter { display: flex; align-items: center; gap: 10px; }
+.meter-bar { flex: 1 1 auto; height: 6px; background: var(--bg-sunken); border: 1px solid var(--p-ghost); }
+.meter-bar.wide { width: 100%; }
+.meter-bar i { display: block; height: 100%; width: 0; background: var(--p); box-shadow: 0 0 8px var(--p); transition: width 180ms linear; }
+.meter-bar i.weak { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+.meter-bar i.fair { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.meter-label { font-size: 10.5px; letter-spacing: 1.6px; color: var(--p-mid); min-width: 64px; text-align: right; }
+
+.warnings { font-size: 11px; color: var(--amber); text-shadow: 0 0 6px rgba(255, 193, 75, 0.35); }
+.warnings div::before { content: "! "; }
+
+/* ---------------------------------------------------------------- TOTP ---- */
+
+.totp-live { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--p-ghost); background: var(--bg-sunken); }
+.totp-code { font-size: 22px; letter-spacing: 6px; color: var(--p-hot); text-shadow: var(--glow-hot); }
+.totp-ring { flex: 1 1 auto; height: 4px; background: var(--bg); border: 1px solid var(--p-ghost); }
+.totp-ring i { display: block; height: 100%; background: var(--p); box-shadow: 0 0 6px var(--p); transition: width 900ms linear; }
+
+.qr { display: flex; justify-content: center; padding: 10px; background: var(--p); }
+.qr svg { width: 190px; height: 190px; display: block; }
+.secret-line { font-size: 11px; color: var(--p-mid); word-break: break-all; }
+.secret-line code { color: var(--p-hot); user-select: text; }
+
+/* -------------------------------------------------------------- gerador --- */
+
+.gen-output {
+  display: block;
+  padding: 14px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--p-dim);
+  color: var(--p-hot);
+  text-shadow: var(--glow-hot);
+  font-size: 17px;
+  letter-spacing: 1.5px;
+  word-break: break-all;
+  min-height: 56px;
+  user-select: text;
+}
+
+.gen-entropy { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--p-mid); }
+.gen-entropy span { min-width: 78px; }
+
+/* ----------------------------------------------------------- fita/audio --- */
+
+/* Onda decorativa: barras desenhadas por gradiente, sem canvas nem asset. */
+.waveform {
+  height: 54px;
+  border: 1px solid var(--p-ghost);
+  background:
+    repeating-linear-gradient(90deg, var(--p-ghost) 0 2px, transparent 2px 5px),
+    var(--bg-sunken);
+  position: relative;
+  overflow: hidden;
+}
+
+.waveform::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(75, 255, 138, 0.28), transparent);
+  width: 34%;
+  animation: sweep 3.2s linear infinite;
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(400%); }
+}
+
+.report {
+  padding: 10px;
+  border: 1px solid var(--p-ghost);
+  background: var(--bg-sunken);
+  font-size: 11.5px;
+  color: var(--p-mid);
+  white-space: pre-wrap;
+}
+
+.report b { color: var(--p-hot); font-weight: 400; }
+.report .warn { color: var(--amber); }
+
+/* ---------------------------------------------------------------- misc ---- */
+
+.hint { font-size: 11.5px; color: var(--p-dim); line-height: 1.6; margin: 0; }
+.hint b { color: var(--p-mid); font-weight: 400; }
+.hint i { color: var(--p-mid); font-style: normal; text-decoration: underline; text-underline-offset: 2px; }
+
+.status-line { font-size: 11.5px; min-height: 18px; color: var(--amber); text-shadow: 0 0 6px rgba(255, 193, 75, 0.4); }
+.status-line.ok { color: var(--p); text-shadow: var(--glow); }
+
+.kv { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 11.5px; }
+.kv dt { color: var(--p-dim); letter-spacing: 1.2px; }
+.kv dd { margin: 0; color: var(--p-hot); }
+
+/* ------------------------------------------------------------ statusbar --- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 26px;
+  padding: 0 14px;
+  border-top: 1px solid var(--p-ghost);
+  background: rgba(75, 255, 138, 0.05);
+  font-size: 10.5px;
+  letter-spacing: 1.4px;
+  color: var(--p-dim);
+  flex: 0 0 auto;
+  z-index: 40;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.stat.grow { flex: 1 1 auto; color: var(--p-mid); overflow: hidden; text-overflow: ellipsis; }
+
+/* --------------------------------------------------------------- toasts --- */
+
+#toast-host {
+  position: fixed;
+  right: 16px;
+  bottom: 38px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.toast {
+  padding: 9px 14px;
+  border: 1px solid var(--p);
+  background: var(--bg-panel);
+  color: var(--p-hot);
+  font-size: 11.5px;
+  letter-spacing: 1.2px;
+  max-width: 420px;
+  box-shadow: 0 0 20px rgba(75, 255, 138, 0.2);
+  animation: toast-in 180ms ease-out;
+}
+
+.toast.err { border-color: var(--danger); color: var(--danger); box-shadow: 0 0 20px rgba(255, 95, 82, 0.22); }
+.toast.warn { border-color: var(--amber); color: var(--amber); }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ---------------------------------------------------------------- modal --- */
+
+.modal-host {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 6, 3, 0.82);
+  backdrop-filter: blur(2px);
+  padding: 20px;
+}
+
+.modal-host[hidden] { display: none; }
+.modal { width: min(460px, 100%); }
+
+/* ------------------------------------------------------------ apertado ---- */
+
+@media (max-width: 860px) {
+  .split { grid-template-columns: 1fr; }
+  .split-left { max-height: 240px; }
+  .tab { padding: 10px 12px; letter-spacing: 1.4px; }
+}

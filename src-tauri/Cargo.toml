@@ -1,0 +1,71 @@
+[package]
+name = "passec"
+version = "0.1.0"
+description = "PASSEC — cofre de credenciais com criptografia autenticada e transporte acustico"
+authors = ["Akira"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "passec_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# --- Criptografia ---------------------------------------------------------
+# Argon2id: derivacao de chave resistente a GPU/ASIC.
+argon2 = { version = "0.5", features = ["std"] }
+# XChaCha20-Poly1305: AEAD com nonce de 192 bits (nonce aleatorio seguro).
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+# BLAKE3: hash do keyfile de audio e derivacao de subchaves.
+blake3 = "1"
+# Limpeza explicita de segredos da RAM.
+zeroize = { version = "1", features = ["derive"] }
+# Comparacao em tempo constante.
+subtle = "2"
+getrandom = "0.2"
+
+# --- TOTP (RFC 6238) ------------------------------------------------------
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+base32 = "0.5"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+# --- Modem acustico -------------------------------------------------------
+hound = "3"                     # leitura/escrita de WAV
+rustfft = "6"                   # FFT para OFDM
+reed-solomon-erasure = "6"      # FEC: recupera blocos perdidos
+crc32fast = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Foundation",
+    "Security_Credentials",
+    "Security_Cryptography",
+    "Storage_Streams",
+] }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# Cripto lenta em modo debug torna o Argon2id insuportavel durante o dev;
+# otimizamos as dependencias mesmo no perfil de desenvolvimento.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
