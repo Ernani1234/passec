@@ -7,6 +7,7 @@
 //! * [`audio`]  — FEC, modem OFDM e esteganografia.
 //! * [`auth`]   — TOTP e Windows Hello.
 //! * [`generator`] — criacao e avaliacao de senhas.
+//! * [`sync`]  — fusao item a item e o cofre num repositorio do GitHub.
 //! * [`session`], [`commands`] — estado da aplicacao e a fronteira com a interface.
 
 pub mod audio;
@@ -15,6 +16,7 @@ pub mod commands;
 pub mod crypto;
 pub mod generator;
 pub mod session;
+pub mod sync;
 pub mod util;
 pub mod vault;
 

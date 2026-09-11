@@ -126,6 +126,39 @@ export interface PasswordOptions {
   exclude_ambiguous: boolean;
 }
 
+export interface SyncStatus {
+  configured: boolean;
+  owner: string;
+  repo: string;
+  path: string;
+  last_sync: number;
+}
+
+export interface MergeReport {
+  added: number;
+  updated: number;
+  removed: number;
+  kept_local: number;
+  total: number;
+}
+
+export interface SyncOutcome {
+  report: MergeReport;
+  had_remote: boolean;
+  synced_at: number;
+}
+
+export interface SyncConfigureResult {
+  /** `false` = repositorio publico; a interface avisa em destaque. */
+  private: boolean;
+  outcome: SyncOutcome;
+}
+
+export interface AdoptResult {
+  entries: number;
+  meta: VaultMeta;
+}
+
 /**
  * Erro vindo do Rust.
  *
@@ -235,3 +268,33 @@ export const stegoReveal = (sourcePath: string, stegoPassword: string, masterPas
 
 export const stegoInspectCarrier = (carrierPath: string) =>
   call<CarrierInfo>("stego_inspect_carrier", { carrierPath });
+
+/* ------------------------------------------------------- sincronizacao --- */
+
+export const syncStatus = () => call<SyncStatus>("sync_status");
+
+export const syncConfigure = (owner: string, repo: string, path: string, token: string) =>
+  call<SyncConfigureResult>("sync_configure", { owner, repo, path, token });
+
+export const syncNow = () => call<SyncOutcome>("sync_now");
+export const syncForcePush = () => call<void>("sync_force_push");
+export const syncDisable = () => call<void>("sync_disable");
+
+/**
+ * Traz um cofre da nuvem para este computador.
+ *
+ * Note que isto NAO e "criar um cofre com a mesma senha": cada criacao sorteia
+ * salt e chave proprios, entao dois cofres criados separadamente nunca se
+ * entendem. O computador novo precisa adotar o arquivo remoto.
+ */
+export const syncAdopt = (
+  owner: string,
+  repo: string,
+  path: string,
+  token: string,
+  password: string,
+  overwriteLocal: boolean,
+) =>
+  call<AdoptResult>("sync_adopt", {
+    req: { owner, repo, path, token, password, overwriteLocal },
+  });

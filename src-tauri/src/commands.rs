@@ -28,6 +28,7 @@ use crate::crypto::{
 };
 use crate::generator::{self, PasswordOptions, Strength};
 use crate::session::AppState;
+use crate::sync;
 use crate::vault::{self, EntrySummary, UnlockedVault, VaultEntry, VaultMeta};
 
 const VAULT_FILENAME: &str = "passec.vault";
@@ -883,6 +884,199 @@ pub fn audio_estimate(state: State<'_, AppState>, robustness: String) -> Cmd<f32
     ))
 }
 
+// --- sincronizacao ---------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct SyncStatus {
+    pub configured: bool,
+    pub owner: String,
+    pub repo: String,
+    pub path: String,
+    pub last_sync: i64,
+}
+
+#[tauri::command]
+pub fn sync_status(state: State<'_, AppState>) -> Cmd<SyncStatus> {
+    let cfg = state.with_vault(|v| v.body.sync.clone())?;
+    Ok(match cfg {
+        Some(c) => SyncStatus {
+            configured: true,
+            owner: c.owner.clone(),
+            repo: c.repo.clone(),
+            path: c.path.clone(),
+            last_sync: c.last_sync,
+        },
+        None => SyncStatus {
+            configured: false,
+            owner: String::new(),
+            repo: String::new(),
+            path: String::new(),
+            last_sync: 0,
+        },
+    })
+}
+
+#[derive(Serialize)]
+pub struct SyncConfigureResult {
+    /// `false` significa repositorio publico — a interface avisa em destaque.
+    pub private: bool,
+    pub outcome: sync::SyncOutcome,
+}
+
+/// Liga a sincronizacao neste cofre e faz o primeiro ciclo.
+#[tauri::command]
+pub fn sync_configure(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    owner: String,
+    repo: String,
+    path: String,
+    token: String,
+) -> Cmd<SyncConfigureResult> {
+    let alvo = sync::Repo {
+        owner: owner.trim().to_string(),
+        repo: repo.trim().to_string(),
+        path: {
+            let p = path.trim();
+            if p.is_empty() { "passec.vault".to_string() } else { p.to_string() }
+        },
+        token: token.trim().to_string(),
+    };
+
+    // Confere acesso antes de gravar qualquer coisa: e melhor falhar aqui, com
+    // o formulario ainda aberto, do que gravar uma configuracao que nao funciona.
+    let private = sync::github::check_access(&alvo)?;
+
+    state.with_vault(|v| {
+        v.body.sync = Some(crate::vault::model::SyncConfig {
+            owner: alvo.owner.clone(),
+            repo: alvo.repo.clone(),
+            path: alvo.path.clone(),
+            token: alvo.token.clone(),
+            last_sha: String::new(),
+            last_sync: 0,
+        });
+    })?;
+
+    let outcome = state.with_vault(sync::sync)??;
+    persist(&state, &app)?;
+
+    Ok(SyncConfigureResult { private, outcome })
+}
+
+#[tauri::command]
+pub fn sync_now(app: AppHandle, state: State<'_, AppState>) -> Cmd<sync::SyncOutcome> {
+    let outcome = state.with_vault(sync::sync)??;
+    persist(&state, &app)?;
+    Ok(outcome)
+}
+
+/// Sobe o cofre local por cima do remoto, sem fundir.
+#[tauri::command]
+pub fn sync_force_push(app: AppHandle, state: State<'_, AppState>) -> Cmd<()> {
+    state.with_vault(sync::force_push)??;
+    persist(&state, &app)
+}
+
+#[tauri::command]
+pub fn sync_disable(app: AppHandle, state: State<'_, AppState>) -> Cmd<()> {
+    state.with_vault(|v| v.body.sync = None)?;
+    persist(&state, &app)
+}
+
+#[derive(Serialize)]
+pub struct AdoptResult {
+    pub entries: usize,
+    pub meta: VaultMeta,
+}
+
+/// Traz um cofre da nuvem para este computador.
+///
+/// E o caminho de um PC novo: nao existe cofre local, e criar um com a mesma
+/// senha **nao** produziria o mesmo cofre — salt e VaultKey sao sorteados na
+/// criacao. Aqui o arquivo remoto e adotado como esta, e so entao a senha
+/// mestra o abre.
+/// Parametros da adocao, agrupados.
+///
+/// A senha mestra passa por aqui, entao o struct se zera ao sair de escopo em
+/// vez de deixar a copia na pilha para o alocador reciclar.
+#[derive(serde::Deserialize, zeroize::Zeroize, zeroize::ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptRequest {
+    #[zeroize(skip)]
+    pub owner: String,
+    #[zeroize(skip)]
+    pub repo: String,
+    #[zeroize(skip)]
+    pub path: String,
+    pub token: String,
+    pub password: String,
+    #[zeroize(skip)]
+    pub overwrite_local: bool,
+}
+
+#[tauri::command]
+pub fn sync_adopt(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    req: AdoptRequest,
+) -> Cmd<AdoptResult> {
+    let destino = vault_path(&app)?;
+    if destino.exists() && !req.overwrite_local {
+        return Err(err(
+            "ja existe um cofre neste computador; confirme a substituicao para continuar",
+        ));
+    }
+
+    // Lido por referencia: `AdoptRequest` implementa `Drop` para zerar a senha,
+    // e um tipo com `Drop` nao pode ser desmontado por movimento.
+    let alvo = sync::Repo {
+        owner: req.owner.trim().to_string(),
+        repo: req.repo.trim().to_string(),
+        path: {
+            let p = req.path.trim();
+            if p.is_empty() {
+                "passec.vault".to_string()
+            } else {
+                p.to_string()
+            }
+        },
+        token: req.token.trim().to_string(),
+    };
+
+    let bytes = sync::fetch_remote(&alvo)?;
+
+    let meta_remota = vault::peek(&bytes)?;
+    if meta_remota.keyfile_mode.requires_file() {
+        return Err(err(
+            "o cofre remoto exige keyfile de audio; traga o arquivo e use a tela de bloqueio",
+        ));
+    }
+
+    // Abre antes de gravar: sem a senha certa, nada e escrito no disco local.
+    let mut aberto = UnlockedVault::open(&bytes, &factors(&req.password, None))?;
+
+    aberto.body.sync = Some(crate::vault::model::SyncConfig {
+        owner: alvo.owner,
+        repo: alvo.repo,
+        path: alvo.path,
+        token: alvo.token,
+        last_sha: String::new(),
+        last_sync: vault::model::now_millis(),
+    });
+
+    let entries = aberto.body.entries.len();
+    let meta = aberto.meta();
+
+    let regravado = aberto.serialize()?;
+    write_atomic(&destino, &regravado)?;
+
+    state.set_vault(aberto, destino);
+    state.record_success();
+
+    Ok(AdoptResult { entries, meta })
+}
+
 // --- utilidades ------------------------------------------------------------
 
 fn unix_now() -> u64 {
@@ -943,5 +1137,11 @@ pub fn handlers() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         stego_hide,
         stego_reveal,
         stego_inspect_carrier,
+        sync_status,
+        sync_configure,
+        sync_now,
+        sync_force_push,
+        sync_disable,
+        sync_adopt,
     ]
 }

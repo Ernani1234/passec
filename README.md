@@ -4,11 +4,12 @@
 
 **Cofre de credenciais offline com criptografia autenticada e transporte de dados por áudio.**
 
-Interface de terminal de fósforo verde. Nenhum servidor, nenhuma sincronização, nenhuma telemetria.
+Interface de terminal de fósforo verde. Sem servidor próprio e sem telemetria —
+a sincronização é opcional e usa um repositório privado seu.
 
 [![Rust](https://img.shields.io/badge/Rust-1.77%2B-d97706?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24c8db?logo=tauri&logoColor=white)](https://tauri.app/)
-[![Testes](https://img.shields.io/badge/testes-112%20passando-4bff8a)](#testes)
+[![Testes](https://img.shields.io/badge/testes-138%20passando-4bff8a)](#testes)
 [![Plataforma](https://img.shields.io/badge/plataforma-Windows-0078d4?logo=windows&logoColor=white)](#instalação)
 [![Licença](https://img.shields.io/badge/licença-MIT-8dff6a)](LICENSE)
 
@@ -36,6 +37,7 @@ Interface de terminal de fósforo verde. Nenhum servidor, nenhuma sincronizaçã
   - [O que protege](#o-que-protege)
   - [O que NÃO protege](#o-que-não-protege)
 - [Como o áudio funciona](#como-o-áudio-funciona)
+- [Sincronização entre computadores](#sincronização-entre-computadores)
 - [Instalação](#instalação)
 - [Uso](#uso)
 - [Arquitetura](#arquitetura)
@@ -115,6 +117,11 @@ Isso libera o áudio para fazer o que ele realmente faz bem.
 - Modem OFDM/DQPSK a ~31 kbit/s
 - Correção de erros Reed-Solomon com robustez escolhível
 - Esteganografia LSB com posições derivadas da chave
+
+**Nuvem**
+- Sincronização por repositório privado do GitHub, com histórico de versões
+- Fusão item a item: dois computadores editando não perdem trabalho
+- Exclusões propagam corretamente (lápides), em vez de ressuscitar itens
 
 **Interface**
 - Terminal monocromático de fósforo verde, com linhas de varredura e vinheta
@@ -261,18 +268,104 @@ mantendo a ordem, a rajada se concentra em poucos e o resto sobrevive intacto.
 
 ---
 
+## Sincronização entre computadores
+
+O cofre pode viver num repositório **privado** do GitHub, e aí qualquer
+computador com o PASSEC instalado chega nas suas credenciais com a senha
+mestra.
+
+### Isso é seguro?
+
+O GitHub recebe o mesmo blob XChaCha20-Poly1305 que estaria no seu disco. Ele
+não consegue abrir — é o modelo do Bitwarden e do 1Password, onde o servidor
+também só guarda ciphertext. Cada sincronização vira um commit, então você
+ganha **histórico**: dá para voltar o cofre a uma versão de semanas atrás.
+
+O repositório precisa ser privado. Não porque o conteúdo seja legível, mas
+porque publicá-lo entrega ao mundo um alvo para força bruta offline contra a
+sua senha mestra. O app avisa em destaque se detectar um repositório público.
+
+### Um cofre, muitas cópias
+
+Esta é a parte que costuma surpreender, e ela decide o desenho inteiro:
+
+> **Criar um cofre novo com a mesma senha não recupera nada.**
+
+Cada criação sorteia um salt e uma VaultKey próprios. Dois cofres criados
+separadamente, ainda que com senhas idênticas, são mutuamente ilegíveis. Por
+isso o computador novo **adota** o arquivo remoto (botão `TENHO UM COFRE NA
+NUVEM` na tela de bloqueio) em vez de criar o seu.
+
+```mermaid
+flowchart LR
+    A["PC de casa"] -->|envia| G[("repo privado<br/>passec.vault")]
+    G -->|adota| B["PC do trabalho"]
+    B -->|envia| G
+    G -->|funde| A
+
+    style G fill:#0e3a20,stroke:#4bff8a,color:#d6ffe4
+```
+
+### Fusão item a item
+
+O caso comum não é "um lado mudou": é você ter editado uma senha em casa e
+cadastrado outra coisa no trabalho. Jogar o arquivo numa pasta compartilhada
+resolveria isso perdendo o trabalho de um dos lados em silêncio.
+
+Aqui a fusão é por item. Cada entrada tem `id` estável e `updated_at`, então
+para cada id vence a versão editada por último — e o resto convive.
+
+**Exclusões precisam de cuidado especial.** Apagar não pode ser só sumir da
+lista: se o computador A apaga um item e o B ainda o tem, a regra "vence quem
+tem" o ressuscitaria, e você apagaria de novo, e de novo. O PASSEC registra uma
+*lápide* com a data da exclusão, e ela compete de igual para igual com a edição:
+apagar às 10h vence editar às 9h, e editar às 11h vence apagar às 10h. As
+lápides são descartadas depois de seis meses.
+
+**Conflito de escrita simultânea** é barrado pelo GitHub: cada envio cita o
+`sha` da versão que foi lida, e se outro computador escreveu nesse intervalo a
+operação falha em vez de sobrescrever. O app pede para sincronizar de novo,
+agora lendo a versão nova.
+
+### Como configurar
+
+1. Crie um repositório **privado** no GitHub (ex.: `passec-vault`). Pode ficar
+   vazio.
+2. Gere um token em **Settings → Developer settings → Personal access tokens →
+   Fine-grained tokens**, com acesso apenas a esse repositório e permissão
+   **Contents: Read and write**.
+3. No PASSEC, aba `NUVEM`: preencha dono, repositório, caminho e token, e clique
+   em `CONECTAR`. A primeira sincronização sobe o cofre.
+4. No outro computador: tela de bloqueio → `TENHO UM COFRE NA NUVEM` → mesmos
+   dados mais a senha mestra.
+
+O token fica guardado dentro do cofre cifrado, então só existe em claro
+enquanto o cofre está destrancado.
+
+### Os limites
+
+- **O relógio de cada máquina arbitra os empates.** Um computador com a hora
+  muito errada vence disputas que não deveria. Resolver isso de verdade exigiria
+  relógios vetoriais e um diálogo de conflito na interface — trabalho que só se
+  paga em edição concorrente frequente, o que não é o caso de um cofre pessoal.
+- **Um computador parado mais de seis meses ressuscita itens apagados**, porque
+  as lápides já terão expirado.
+- **A sincronização não é automática.** É um botão. Não há polling nem daemon.
+
+---
+
 ## Instalação
 
 ### Binário pronto
 
 | Arquivo | Tamanho | Descrição |
 |---------|---------|-----------|
-| [**PASSEC_0.1.0_x64-setup.exe**](release/PASSEC_0.1.0_x64-setup.exe) | 1,5 MB | Instalador NSIS, por usuário, sem exigir administrador |
-| [**PASSEC_0.1.0_x64-portable.exe**](release/PASSEC_0.1.0_x64-portable.exe) | 4,4 MB | Executável avulso, roda sem instalar |
+| [**PASSEC_0.1.0_x64-setup.exe**](release/PASSEC_0.1.0_x64-setup.exe) | 2,0 MB | Instalador NSIS, por usuário, sem exigir administrador |
+| [**PASSEC_0.1.0_x64-portable.exe**](release/PASSEC_0.1.0_x64-portable.exe) | 5,4 MB | Executável avulso, roda sem instalar |
 
 Requer **Windows 10/11** com WebView2 (já vem no Windows 11).
 
-> O binário inteiro cabe em 4,4 MB porque o Tauri usa o WebView2 do sistema em
+> O binário inteiro cabe em 5,4 MB porque o Tauri usa o WebView2 do sistema em
 > vez de embarcar um navegador — um aplicativo equivalente em Electron passaria
 > de 150 MB.
 
@@ -338,6 +431,9 @@ src-tauri/src/
 │  ├─ stego.rs      LSB com posições derivadas da chave
 │  └─ wav.rs        E/S e reamostragem cúbica
 ├─ auth/           TOTP (RFC 6238) e Windows Hello via TPM
+├─ sync/          sincronizacao entre computadores
+│  ├─ merge.rs      fusão item a item, com lápides de exclusão
+│  └─ github.rs     Contents API, conflito por sha
 ├─ generator.rs    geração e avaliação de senhas
 ├─ session.rs      cofre destrancado, auto-lock, freio de tentativas
 └─ commands.rs     fronteira com a interface
@@ -382,7 +478,7 @@ Gravação é atômica: escreve num temporário e renomeia por cima.
 
 ```bash
 cd src-tauri
-cargo test                 # 104 unitários + 8 de integração
+cargo test                 # 125 unitários + 13 de integração
 cargo clippy --all-targets
 ```
 
@@ -392,6 +488,10 @@ que demodula mas não abre, uma troca de senha que invalida o TOTP.
 
 Alguns testes exercitam o modem contra ruído branco, atenuação de 20×,
 deslocamento temporal, corte no meio do áudio e reamostragem por 44,1 kHz.
+
+Os testes de sincronização montam dois cofres reais, cifrados de verdade, e os
+fazem divergir e convergir — a camada HTTP é substituída por passar os bytes de
+um lado para o outro, que é literalmente o que o GitHub faz.
 
 ---
 
@@ -437,6 +537,10 @@ deles com folga quando o ruído apertou.
 - **Sem importação de outros gerenciadores** (KeePass, Bitwarden, 1Password).
 - **O modem exige 48 kHz ou 44,1 kHz.** Taxas muito distantes disso não foram
   testadas.
+- **A sincronização foi testada na lógica, não contra a API real.** A fusão, a
+  adoção e a recusa de cofres estranhos têm testes com cofres cifrados de
+  verdade; as chamadas HTTP ao GitHub não foram exercitadas contra o serviço.
+- **Sincronizar é manual.** Um botão, sem daemon nem polling em segundo plano.
 
 ---
 

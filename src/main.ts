@@ -143,6 +143,7 @@ async function refreshLock(): Promise<void> {
   setText("lock-keyfile-hint", KEYFILE_HINTS.none);
   keyfilePath = null;
   $<HTMLInputElement>("lock-keyfile").value = "";
+  show($("lock-cloud-panel"), false);
   status("");
 }
 
@@ -266,7 +267,16 @@ function wireLock(): void {
 
 /** Apaga do DOM tudo que veio do cofre. */
 function wipeUi(): void {
-  for (const id of ["lock-password", "lock-password2", "lock-totp", "sec-newpass", "stego-pass"]) {
+  for (const id of [
+    "lock-password",
+    "lock-password2",
+    "lock-totp",
+    "sec-newpass",
+    "stego-pass",
+    "adopt-token",
+    "adopt-password",
+    "sync-token",
+  ]) {
     $<HTMLInputElement>(id).value = "";
   }
   $<HTMLUListElement>("entry-list").innerHTML = "";
@@ -282,6 +292,7 @@ async function enterApp(): Promise<void> {
   screenTo("screen-app");
   await refreshList();
   await refreshSecurity();
+  await refreshSync();
   await refreshTapeEstimate();
   statusBar("cofre aberto");
 }
@@ -305,6 +316,7 @@ function wireTabs(): void {
       tab.classList.add("active");
       $(tab.dataset.pane!).classList.add("active");
       if (tab.dataset.pane === "pane-sec") void refreshSecurity();
+      if (tab.dataset.pane === "pane-cloud") void refreshSync();
       if (tab.dataset.pane === "pane-tape") void refreshTapeEstimate();
     });
   }
@@ -687,6 +699,177 @@ function wireStego(): void {
   });
 }
 
+
+/* ============================================================== nuvem ===== */
+
+async function refreshSync(): Promise<void> {
+  const st = await api.syncStatus().catch(() => null);
+  if (!st) return;
+
+  const badge = $("sync-badge");
+  badge.textContent = st.configured ? "LIGADA" : "DESLIGADA";
+  badge.className = `badge ${st.configured ? "on" : "off"}`;
+
+  show($("sync-form"), !st.configured);
+  show($("sync-active"), st.configured);
+
+  if (st.configured) {
+    $("sync-info").innerHTML = `
+      <dt>REPOSITORIO</dt><dd>${escapeHtml(st.owner)}/${escapeHtml(st.repo)}</dd>
+      <dt>ARQUIVO</dt><dd>${escapeHtml(st.path)}</dd>
+      <dt>ULTIMA SINC.</dt><dd>${
+        st.last_sync ? new Date(st.last_sync).toLocaleString("pt-BR") : "nunca"
+      }</dd>`;
+  }
+}
+
+function renderSyncReport(o: api.SyncOutcome): void {
+  const el = $("sync-report");
+  el.hidden = false;
+  const r = o.report;
+  el.innerHTML = o.had_remote
+    ? `<b>fundido com a versao remota</b>
+vindos da nuvem: <b>${r.added}</b>    atualizados: <b>${r.updated}</b>
+apagados: <b>${r.removed}</b>    mantidos daqui: <b>${r.kept_local}</b>
+total no cofre: <b>${r.total}</b>`
+    : `<b>primeira subida</b> — o repositorio ainda nao tinha cofre
+itens enviados: <b>${r.total}</b>`;
+}
+
+function lerCamposSync(prefixo: string) {
+  const v = (id: string) => $<HTMLInputElement>(`${prefixo}-${id}`).value.trim();
+  return {
+    owner: v("owner"),
+    repo: v("repo"),
+    path: v("path") || "passec.vault",
+    token: v("token"),
+  };
+}
+
+function wireCloud(): void {
+  $("sync-connect").addEventListener("click", async () => {
+    const c = lerCamposSync("sync");
+    if (!c.owner || !c.repo || !c.token) {
+      toast("preencha dono, repositorio e token", "warn");
+      return;
+    }
+
+    const r = await guard("conectando ao GitHub...", () =>
+      api.syncConfigure(c.owner, c.repo, c.path, c.token),
+    );
+    if (!r) return;
+
+    // Um repositorio publico expoe o cofre a forca bruta offline por qualquer
+    // pessoa. Nao bloqueamos — a decisao e do usuario — mas nao deixamos passar
+    // em silencio.
+    if (!r.private) {
+      toast("ATENCAO: este repositorio e PUBLICO. Torne-o privado agora.", "err", 12000);
+    }
+    $<HTMLInputElement>("sync-token").value = "";
+    renderSyncReport(r.outcome);
+    await refreshSync();
+    await refreshList();
+    toast("sincronizacao ligada");
+  });
+
+  $("sync-run").addEventListener("click", async () => {
+    const o = await guard("sincronizando...", () => api.syncNow());
+    if (!o) return;
+    renderSyncReport(o);
+    await refreshSync();
+    await refreshList();
+    const r = o.report;
+    toast(
+      r.added + r.updated + r.removed === 0
+        ? "ja estava em dia"
+        : `sincronizado: +${r.added} novos, ${r.updated} atualizados, ${r.removed} apagados`,
+    );
+  });
+
+  $("sync-push").addEventListener("click", async () => {
+    if (
+      !confirm(
+        `Enviar esta versao por cima da que esta na nuvem?
+
+O que existir so na nuvem sera perdido. Use isto apenas para resolver um impasse.`,
+      )
+    ) {
+      return;
+    }
+    const ok = await guard("enviando...", () => api.syncForcePush());
+    if (ok !== undefined) {
+      await refreshSync();
+      toast("versao local enviada");
+    }
+  });
+
+  $("sync-off").addEventListener("click", async () => {
+    if (!confirm("Desligar a sincronizacao? O arquivo no GitHub continua la.")) return;
+    const ok = await guard("desligando...", () => api.syncDisable());
+    if (ok !== undefined) {
+      $("sync-report").hidden = true;
+      await refreshSync();
+      toast("sincronizacao desligada");
+    }
+  });
+}
+
+/** Traz um cofre da nuvem para este computador, a partir da tela de bloqueio. */
+function wireAdopt(): void {
+  const painel = $("lock-cloud-panel");
+
+  $("lock-cloud").addEventListener("click", () => {
+    show(painel, true);
+    $<HTMLInputElement>("adopt-owner").focus();
+  });
+  $("adopt-cancel").addEventListener("click", () => show(painel, false));
+
+  $("adopt-run").addEventListener("click", async () => {
+    const c = lerCamposSync("adopt");
+    const senha = $<HTMLInputElement>("adopt-password").value;
+
+    if (!c.owner || !c.repo || !c.token) {
+      toast("preencha dono, repositorio e token", "warn");
+      return;
+    }
+    if (!senha) {
+      toast("digite a senha mestra do cofre remoto", "warn");
+      return;
+    }
+
+    // `creating` e falso quando ja existe um cofre neste computador — e adotar
+    // vai substitui-lo.
+    const temLocal = !creating;
+    if (
+      temLocal &&
+      !confirm(
+        `Ja existe um cofre neste computador.
+
+Trazer o da nuvem vai substitui-lo. O que estiver so aqui sera perdido.`,
+      )
+    ) {
+      return;
+    }
+
+    status("baixando e abrindo (Argon2id, 256 MiB)...");
+    const r = await guard("trazendo da nuvem...", () =>
+      api.syncAdopt(c.owner, c.repo, c.path, c.token, senha, temLocal),
+    );
+    if (!r) {
+      status("");
+      return;
+    }
+
+    for (const id of ["adopt-token", "adopt-password"]) {
+      $<HTMLInputElement>(id).value = "";
+    }
+    show(painel, false);
+    meta = r.meta;
+    toast(`cofre trazido da nuvem — ${r.entries} itens`);
+    await enterApp();
+  });
+}
+
 /* ========================================================= seguranca ====== */
 
 async function refreshSecurity(): Promise<void> {
@@ -869,6 +1052,8 @@ async function main(): Promise<void> {
   wireGenerator();
   wireTape();
   wireStego();
+  wireCloud();
+  wireAdopt();
   wireSecurity();
   wireActivity();
   startStatusLoop();

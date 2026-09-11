@@ -103,9 +103,50 @@
                 <div class="actions">
                   <button class="btn primary" id="lock-submit">DESTRANCAR</button>
                   <button class="btn" id="lock-hello" hidden>WINDOWS HELLO</button>
+                  <button class="btn" id="lock-cloud">TENHO UM COFRE NA NUVEM</button>
                 </div>
 
                 <div class="status-line" id="lock-status"></div>
+              </div>
+            </div>
+
+            <div class="panel lock-panel" id="lock-cloud-panel" hidden>
+              <div class="panel-head">
+                <span>TRAZER COFRE DA NUVEM</span>
+                <span class="dots"></span>
+              </div>
+              <div class="panel-body">
+                <p class="hint">
+                  Criar um cofre novo com a mesma senha <b>nao</b> recupera suas credenciais: cada cofre
+                  sorteia uma chave propria na criacao. Para usar o cofre de outro computador, e preciso
+                  trazer o arquivo dele — e e isto que esta tela faz.
+                </p>
+                <div class="grid2">
+                  <label class="field">
+                    <span class="field-label">DONO</span>
+                    <input type="text" id="adopt-owner" spellcheck="false" placeholder="Ernani1234" />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">REPOSITORIO</span>
+                    <input type="text" id="adopt-repo" spellcheck="false" placeholder="passec-vault" />
+                  </label>
+                </div>
+                <label class="field">
+                  <span class="field-label">CAMINHO</span>
+                  <input type="text" id="adopt-path" spellcheck="false" placeholder="passec.vault" />
+                </label>
+                <label class="field">
+                  <span class="field-label">TOKEN DE ACESSO</span>
+                  <input type="password" id="adopt-token" autocomplete="off" spellcheck="false" />
+                </label>
+                <label class="field">
+                  <span class="field-label">SENHA MESTRA DO COFRE</span>
+                  <input type="password" id="adopt-password" autocomplete="off" />
+                </label>
+                <div class="actions">
+                  <button class="btn primary" id="adopt-run">CONECTAR E ABRIR</button>
+                  <button class="btn" id="adopt-cancel">VOLTAR</button>
+                </div>
               </div>
             </div>
           </div>
@@ -118,6 +159,7 @@
             <button class="tab" data-pane="pane-gen">GERADOR</button>
             <button class="tab" data-pane="pane-tape">FITA</button>
             <button class="tab" data-pane="pane-stego">OCULTAR</button>
+            <button class="tab" data-pane="pane-cloud">NUVEM</button>
             <button class="tab" data-pane="pane-sec">SEGURANCA</button>
           </nav>
 
@@ -316,6 +358,63 @@
                   <div class="actions">
                     <button class="btn primary" id="stego-hide">ESCONDER</button>
                     <button class="btn" id="stego-reveal">REVELAR DE UM AUDIO</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ---------- NUVEM ---------- -->
+            <div class="pane" id="pane-cloud">
+              <div class="panel">
+                <div class="panel-head">
+                  <span>SINCRONIZACAO — REPOSITORIO GITHUB</span>
+                  <span class="dots"></span>
+                  <span class="badge" id="sync-badge">—</span>
+                </div>
+                <div class="panel-body">
+                  <p class="hint">
+                    O cofre vira um arquivo num repositorio <b>privado</b>. O GitHub recebe o mesmo blob
+                    cifrado que fica no seu disco — ele nao consegue abrir. Cada sincronizacao e um commit,
+                    entao voce ganha historico: da pra voltar a uma versao de semanas atras.
+                  </p>
+
+                  <div id="sync-form">
+                    <div class="grid2">
+                      <label class="field">
+                        <span class="field-label">DONO (USUARIO OU ORGANIZACAO)</span>
+                        <input type="text" id="sync-owner" spellcheck="false" placeholder="Ernani1234" />
+                      </label>
+                      <label class="field">
+                        <span class="field-label">REPOSITORIO</span>
+                        <input type="text" id="sync-repo" spellcheck="false" placeholder="passec-vault" />
+                      </label>
+                    </div>
+                    <label class="field">
+                      <span class="field-label">CAMINHO DO ARQUIVO</span>
+                      <input type="text" id="sync-path" spellcheck="false" placeholder="passec.vault" />
+                    </label>
+                    <label class="field">
+                      <span class="field-label">TOKEN DE ACESSO (FINE-GRAINED, CONTENTS: READ AND WRITE)</span>
+                      <input type="password" id="sync-token" autocomplete="off" spellcheck="false" />
+                    </label>
+                    <p class="hint">
+                      Crie em <b>github.com/settings/personal-access-tokens</b>, com acesso apenas a este
+                      repositorio e permissao <b>Contents: Read and write</b>. O token fica guardado dentro
+                      do cofre cifrado.
+                    </p>
+                    <div class="actions">
+                      <button class="btn primary" id="sync-connect">CONECTAR</button>
+                    </div>
+                  </div>
+
+                  <div id="sync-active" hidden>
+                    <dl class="kv" id="sync-info"></dl>
+                    <div class="actions">
+                      <button class="btn primary" id="sync-run">SINCRONIZAR AGORA</button>
+                      <button class="btn" id="sync-push">ENVIAR POR CIMA</button>
+                      <button class="btn danger" id="sync-off">DESLIGAR</button>
+                    </div>
+                    <div class="report" id="sync-report" hidden></div>
                   </div>
                 </div>
               </div>

@@ -46,6 +46,13 @@ rustfft = "6"                   # FFT para OFDM
 reed-solomon-erasure = "6"      # FEC: recupera blocos perdidos
 crc32fast = "1"
 
+# --- Sincronizacao -------------------------------------------------------
+# ureq em vez de reqwest: cliente sincrono, sem arrastar o runtime tokio para
+# um aplicativo cujos comandos ja sao sincronos. Usa rustls, entao nao depende
+# do OpenSSL do sistema.
+ureq = { version = "2", features = ["json"] }
+base64 = "0.22"
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Foundation",
