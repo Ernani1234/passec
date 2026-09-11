@@ -342,6 +342,30 @@ agora lendo a versão nova.
 O token fica guardado dentro do cofre cifrado, então só existe em claro
 enquanto o cofre está destrancado.
 
+### O token é por computador — e é descartável
+
+Há uma circularidade inevitável no primeiro acesso de um computador novo: o
+token mora *dentro* do cofre, mas para baixar o cofre é preciso do token. Por
+isso, na primeira vez em cada máquina você informa os quatro dados do
+repositório mais a senha mestra. Daí em diante aquele computador não pede mais
+nada.
+
+O jeito prático de lidar com isso **não é carregar o token**, e sim gerar um
+novo quando precisar: diferente do keyfile, perder o token não custa nada —
+você entra no GitHub e gera outro em um minuto. Nada para guardar no bolso,
+nada para vazar num papel.
+
+Isso deixa dois segredos independentes protegendo o cofre: **acesso à sua conta
+do GitHub** e a **senha mestra**. Quem souber apenas a senha não alcança o
+arquivo, porque o repositório é privado.
+
+> [!IMPORTANT]
+> Como consequência, a conta do GitHub passa a fazer parte do modelo de
+> segurança — vale manter 2FA ativo nela. E se um computador for perdido,
+> revogue o token dele em **Settings → Developer settings → Personal access
+> tokens**: isso corta o acesso daquela máquina à nuvem sem mexer no cofre nem
+> nas outras.
+
 ### Os limites
 
 - **O relógio de cada máquina arbitra os empates.** Um computador com a hora
